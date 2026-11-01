@@ -238,6 +238,12 @@ private:
     std::unique_ptr<text::Layout> _placeholderLayout;
     std::shared_ptr<char>         _alive; // guards async clipboard callbacks
     float                         _layoutW = -1, _scrollY = 0;
+    // One-line fields (maxLines 1) lay their text out unwrapped and scroll
+    // it sideways to the caret, as a native line edit does: a long token
+    // (a pasted cookie, a URL) would otherwise wrap and show only its last
+    // part.
+    float                         _scrollX = 0;
+    bool                          oneLine() const { return _maxLines == 1; }
     uint32_t                      _caret = 0, _anchor = 0, _preeditPos = 0;
     uint32_t                      _selOriginA = 0, _selOriginB = 0;
     uint32_t                      _maxLength     = 0; // code points; 0 = none

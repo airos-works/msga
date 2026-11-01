@@ -269,7 +269,7 @@ std::unique_ptr<text::Layout> TextEdit::buildPara(const Para &p, float w) const 
             t.spans.push_back({0, 0, styleFor(_fmt[k])});
     }
     text::LayoutOptions o;
-    o.maxWidth = w;
+    o.maxWidth = oneLine() ? 1e9f : w;
     return text::Layout::build(std::move(t), o, windowScale());
 }
 
@@ -463,7 +463,7 @@ RectF TextEdit::caretRect() const {
                           );
     RectF        r = docCaretRect(d);
     const Style &s = currentStyle();
-    r.x += s.pad.l;
+    r.x += s.pad.l - _scrollX;
     r.y += s.pad.t - _scrollY;
     r.w = std::max(r.w, 1.f);
     if (r.h <= 0)
@@ -484,7 +484,23 @@ void TextEdit::ensureCaretVisible() {
     if (r.y + r.h > _scrollY + view)
         _scrollY = r.y + r.h - view;
     _scrollY = std::clamp(_scrollY, 0.f, std::max(0.f, docHeight() - view));
-    if (_scrollY != old)
+    const float oldX = _scrollX;
+    if (oneLine()) {
+        // The caret in view, a pixel of room for it at the far end; no
+        // scrolling past the end of the text.
+        const float viewW = contentWidth();
+        float       textW = 0;
+        for (const Para &q : _paras)
+            textW = std::max(textW, q.layout->width());
+        if (r.x < _scrollX)
+            _scrollX = r.x;
+        if (r.x + 1 > _scrollX + viewW)
+            _scrollX = r.x + 1 - viewW;
+        _scrollX = std::clamp(_scrollX, 0.f, std::max(0.f, textW + 1 - viewW));
+    } else {
+        _scrollX = 0;
+    }
+    if (_scrollY != old || _scrollX != oldX)
         update();
 }
 
@@ -702,6 +718,7 @@ void TextEdit::setText(std::string_view plain) {
     _typingSet       = false;
     _caretTyped      = false;
     _scrollY         = 0;
+    _scrollX         = 0;
     splitParas();
     contentChanged();
 }
@@ -961,7 +978,7 @@ void TextEdit::setPrimarySelection() {
 uint32_t TextEdit::hitOffset(PointF local) {
     const Style &s = currentStyle();
     currentLayout();
-    return toModel(docHitTest({local.x - s.pad.l, local.y - s.pad.t + _scrollY}));
+    return toModel(docHitTest({local.x - s.pad.l + _scrollX, local.y - s.pad.t + _scrollY}));
 }
 
 uint32_t TextEdit::wordLeft(uint32_t o) {
@@ -1141,7 +1158,7 @@ void TextEdit::paint(gfx::Painter &p) {
     currentLayout();
     p.save();
     p.clipRect({s.pad.l, s.pad.t, contentWidth(), std::max(0.f, height() - s.pad.t - s.pad.b)});
-    p.translate(snapPx(s.pad.l), snapPx(s.pad.t - _scrollY));
+    p.translate(snapPx(s.pad.l - _scrollX), snapPx(s.pad.t - _scrollY));
     if (_text.empty() && _preedit.empty() && !_placeholder.empty()) {
         if (!_placeholderLayout) {
             text::AttributedText t;

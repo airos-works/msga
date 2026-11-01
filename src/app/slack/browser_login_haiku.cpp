@@ -11,6 +11,10 @@
 // session closes the window (and the Summit it started); the profile is
 // wiped afterwards.
 //
+// The session asks for no page-load waits ("pageLoadStrategy":"none"):
+// otherwise every WebDriver command waits for the page, and Slack's heavy
+// pages on a machine short of memory outlast any sensible request timeout.
+//
 // A Summit already running with the user's own profile takes the session
 // instead (Summit is single launch): the window opens beside the user's, and
 // a Slack session they already have there is picked up at once.
@@ -35,8 +39,9 @@ namespace {
 constexpr int kPollIntervalMs   = 500;
 constexpr int kDriverTimeoutMs  = 20000;  // summitdriver started → answering /status
 constexpr int kTeamGraceMs      = 15000;  // the web client's boot after the login
-constexpr int kOverallTimeoutMs = 5 * 60 * 1000;
-constexpr int kHttpTimeoutMs    = 30000;  // navigation commands wait for the page
+// Signing in may take a while: SSO, a second factor, a code from the mail.
+constexpr int kOverallTimeoutMs = 20 * 60 * 1000;
+constexpr int kHttpTimeoutMs    = 30000;
 
 constexpr const char *kSignInUrl     = "https://slack.com/signin";
 constexpr const char *kClientUrl     = "https://app.slack.com/client";
@@ -190,7 +195,8 @@ void BrowserLogin::wdStep() {
         return;
     case 1: { // a session: Summit with a throwaway profile
         const std::string caps = str::concat(
-            {R"({"capabilities":{"alwaysMatch":{"summit:browserOptions":{"args":["--profile",)",
+            {R"({"capabilities":{"alwaysMatch":{"pageLoadStrategy":"none",)",
+             R"("summit:browserOptions":{"args":["--profile",)",
              quoted(_profile),
              "]}}}}"}
         );
@@ -203,6 +209,7 @@ void BrowserLogin::wdStep() {
                 return;
             }
             _wdSession = std::string(id);
+            LOG_INFO("signin", "WebDriver session %s on port %d", _wdSession.c_str(), _port);
             setProgress(i18n::tr("Sign in to Slack in the browser window\xE2\x80\xA6"));
             wd("POST",
                str::concat({"/session/", _wdSession, "/url"}),
@@ -224,9 +231,16 @@ void BrowserLogin::wdPoll() {
     // Where the window is (for the workspace hosts, should the web client
     // never boot), then the cookie.
     wd("GET", base + "/url", {}, [this, base](int status, const json::Value &v) {
-        if (status == 404 || status == 0) {
-            // The user closed the window: hand back what there is.
-            finish(_cookie, hostTeams(), _cookie.empty() ? "cancelled" : "");
+        if (status != 200) {
+            // The user closed the window (or quit Summit): hand back what
+            // there is. Anything else (a slow page, a busy driver: a heavy
+            // page on a machine short of memory answers late) is tried again
+            // on the next tick.
+            const std::string_view err = v["error"].str();
+            if (err == "no such window" || err == "invalid session id")
+                finish(_cookie, hostTeams(), _cookie.empty() ? "cancelled" : "");
+            else if (status != 0)
+                LOG_INFO("signin", "WebDriver url: %d %.*s", status, int(err.size()), err.data());
             return;
         }
         const std::string_view url = v.str();
@@ -264,6 +278,7 @@ void BrowserLogin::wdPoll() {
             if (status != 200 || !str::startsWith(value, "xoxd-"))
                 return; // not signed in yet
             // Verbatim, still percent-encoded as Slack stores it.
+            LOG_INFO("signin", "signed in: the session cookie is there");
             _cookie     = std::string(value);
             _cookieAtMs = double(base::monotonicMs());
             setProgress(i18n::tr("Signed in \xE2\x80\x94 looking up your workspaces\xE2\x80\xA6"));

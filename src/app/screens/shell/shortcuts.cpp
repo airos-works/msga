@@ -178,6 +178,13 @@ std::vector<std::string> tokens(const Keys &k) {
         out.emplace_back("Option");
     if (k.mods & Shift)
         out.emplace_back("Shift");
+#else
+    if (k.mods & Ctrl)
+        out.emplace_back("Ctrl");
+    if (k.mods & Alt)
+        out.emplace_back("Alt");
+    if (k.mods & Shift)
+        out.emplace_back("Shift");
 #endif
     out.push_back(portableName(k.key));
     return out;

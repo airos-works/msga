@@ -45,8 +45,15 @@ constexpr const char *kNotificationArg = "--plat-notification=";
 // this thread takes the lock over and runs it.
 int32 applicationThread(void *data) {
     auto *app = static_cast<PlatBApplication *>(data);
+    // Run() returns with the looper still locked by this thread; the
+    // application goes on this same thread, as an application's main()
+    // deletes it after Run(). Deleted from another thread once this one has
+    // gone, ~BApplication waits on its port forever and the team never
+    // exits: a quit MSGA lingered, and single launch handed every later
+    // launch to it.
     if (app->Lock())
         app->Run();
+    delete app;
     return 0;
 }
 
@@ -140,13 +147,16 @@ HaikuApp::HaikuApp() {
 
 HaikuApp::~HaikuApp() {
     _loop.core.shutdown();
-    if (_bapp && !_secondary) {
+    if (_bapp && !_secondary && _appThread >= 0) {
+        // The application thread deletes it once Run() returns.
         _bapp->leaving = true;
         BMessenger(_bapp).SendMessage(B_QUIT_REQUESTED);
         status_t ignored;
         wait_for_thread(_appThread, &ignored);
+    } else {
+        delete _bapp; // never run: a secondary launch, or no thread
     }
-    delete _bapp;
+    _bapp = nullptr;
 }
 
 bool HaikuApp::start(std::string *error) {

@@ -54,8 +54,22 @@ constexpr int kTeamGraceMs      = 15000;  // the web client's boot after the log
 constexpr int kOverallTimeoutMs = 20 * 60 * 1000;
 constexpr int kHttpTimeoutMs    = 30000;
 
-constexpr const char *kSignInUrl     = "https://slack.com/signin";
-constexpr const char *kClientUrl     = "https://app.slack.com/client";
+// The web client: it boots at once in a browser that is signed in, and
+// sends one that isn't to Slack's sign-in, coming back here afterwards.
+constexpr const char *kClientUrl = "https://app.slack.com/client";
+
+// Where the window shows a finished sign-in: the web client on a team (its
+// id in the path), or the page that hands over to the desktop app.
+bool signedInPage(std::string_view url) {
+    if (str::startsWith(url, "https://app.slack.com/client/T") ||
+        str::startsWith(url, "https://app.slack.com/client/E"))
+        return true;
+    const size_t host = url.find("://");
+    const size_t path = host == std::string_view::npos ? host : url.find('/', host + 3);
+    return path != std::string_view::npos &&
+           url.substr(0, path).find(".slack.com") != std::string_view::npos &&
+           str::startsWith(url.substr(path), "/ssb/");
+}
 // Where msga asks Summit to listen for WebDriver (loopback only), and how
 // long Summit gets to open it: a start of Summit, or the hand-off of the
 // arguments to the one running.
@@ -275,7 +289,7 @@ void BrowserLogin::wdStep() {
             setProgress(i18n::tr("Sign in to Slack in the browser window\xE2\x80\xA6"));
             wd("POST",
                str::concat({"/session/", _wdSession, "/url"}),
-               str::concat({R"({"url":)", quoted(kSignInUrl), "}"}),
+               str::concat({R"({"url":)", quoted(kClientUrl), "}"}),
                [this](int, const json::Value &) { _wdState = 3; });
         });
         return;
@@ -288,10 +302,13 @@ void BrowserLogin::wdStep() {
     }
 }
 
+// Watches the window, never steers it: the user signs in at their own pace
+// (Slack's sign-in sets interim cookies on the way, and taking the window
+// away then cuts the sign-in short). Once it shows a signed-in page, the
+// browser's `d` cookies and the web client's workspaces are checked with
+// Slack.
 void BrowserLogin::wdPoll() {
     const std::string base = str::concat({"/session/", _wdSession});
-    // Where the window is (for the workspace hosts, should the web client
-    // never boot), then the cookie.
     wd("GET", base + "/url", {}, [this, base](int status, const json::Value &v) {
         if (status != 200) {
             // The user closed the window (or quit Summit): hand back what
@@ -300,25 +317,56 @@ void BrowserLogin::wdPoll() {
             // on the next tick.
             const std::string_view err = v["error"].str();
             if (err == "no such window" || err == "invalid session id")
-                finish(_cookie, hostTeams(), _cookie.empty() ? "cancelled" : "");
+                finish({}, {}, "cancelled");
             else if (status != 0)
                 LOG_INFO("signin", "WebDriver url: %d %.*s", status, int(err.size()), err.data());
             return;
         }
-        const std::string_view url = v.str();
-        if (url.find("slack.com") != std::string_view::npos) {
+        const std::string url(v.str());
+        if (url.find("slack.com") != std::string::npos) {
             _hosts.emplace_back(url);
             std::sort(_hosts.begin(), _hosts.end());
             _hosts.erase(std::unique(_hosts.begin(), _hosts.end()), _hosts.end());
         }
-        if (!_cookie.empty()) {
-            if (!_wdClient) {
-                // The web client writes the signed-in workspaces and their
-                // tokens to localConfig_v2 as it boots.
-                _wdClient   = true;
-                _wdClientMs = double(base::monotonicMs());
-                wd("POST", base + "/url", str::concat({R"({"url":)", quoted(kClientUrl), "}"}),
-                   [](int, const json::Value &) {});
+        if (!signedInPage(url)) {
+            _wdClient = false;
+            return; // still signing in
+        }
+        if (!_wdClient) {
+            _wdClient   = true;
+            _wdClientMs = double(base::monotonicMs());
+            LOG_INFO("signin", "the window shows a signed-in page");
+            setProgress(i18n::tr("Signed in \xE2\x80\x94 looking up your workspaces\xE2\x80\xA6"));
+        }
+        const bool handoff = url.find("/ssb/") != std::string::npos;
+        // Every cookie, not WebDriver's first `d`: a profile that used Slack
+        // before can hold more than one.
+        wd("GET", base + "/cookie", {}, [this, base, handoff](int status, const json::Value &v) {
+            if (status != 200)
+                return;
+            std::vector<std::string> found;
+            for (const json::Value c : v) {
+                const std::string_view value = c["value"].str();
+                if (c["name"].str() != "d" || !str::startsWith(value, "xoxd-"))
+                    continue;
+                // Verbatim, still percent-encoded as Slack stores it.
+                const std::string d(value);
+                if (std::find(_rejected.begin(), _rejected.end(), d) == _rejected.end() &&
+                    std::find(found.begin(), found.end(), d) == found.end())
+                    found.push_back(d);
+            }
+            if (found.empty())
+                return; // only sessions Slack refused: the sign-in isn't done
+            _cookies = std::move(found);
+            _cookie  = _cookies.front();
+            if (handoff) {
+                // The desktop-app hand-off page never boots the web client;
+                // its address names the workspace.
+                std::vector<TeamSession> hosts = hostTeams();
+                if (hosts.empty())
+                    finish(_cookie, {}, {});
+                else
+                    wdVerify(std::move(hosts));
                 return;
             }
             wd("POST",
@@ -341,31 +389,6 @@ void BrowserLogin::wdPoll() {
                            wdVerify(std::move(hosts));
                    }
                });
-            return;
-        }
-        // Every cookie, not WebDriver's first `d`: a profile that used Slack
-        // before can hold more than one.
-        wd("GET", base + "/cookie", {}, [this](int status, const json::Value &v) {
-            if (status != 200)
-                return;
-            std::vector<std::string> found;
-            for (const json::Value c : v) {
-                const std::string_view value = c["value"].str();
-                if (c["name"].str() != "d" || !str::startsWith(value, "xoxd-"))
-                    continue;
-                // Verbatim, still percent-encoded as Slack stores it.
-                const std::string d(value);
-                if (std::find(_rejected.begin(), _rejected.end(), d) == _rejected.end() &&
-                    std::find(found.begin(), found.end(), d) == found.end())
-                    found.push_back(d);
-            }
-            if (found.empty())
-                return; // not signed in yet (or still only sessions Slack refused)
-            LOG_INFO("signin", "signed in: %zu session cookie(s) to try", found.size());
-            _cookies    = std::move(found);
-            _cookie     = _cookies.front();
-            _cookieAtMs = double(base::monotonicMs());
-            setProgress(i18n::tr("Signed in \xE2\x80\x94 looking up your workspaces\xE2\x80\xA6"));
         });
     });
 }
@@ -408,18 +431,14 @@ void BrowserLogin::wdVerify(std::vector<TeamSession> teams, size_t cookie) {
             _cookie = _cookies.front();
             return;
         }
-        LOG_INFO("signin", "no session Slack accepts; waiting for a new sign-in");
+        // The window is left alone: if the session is stale, the web client
+        // itself sends the user to Slack's sign-in, and a new cookie comes.
+        LOG_INFO("signin", "no session Slack accepts; waiting for the sign-in to finish");
         _rejected.insert(_rejected.end(), _cookies.begin(), _cookies.end());
         _cookies.clear();
         _cookie.clear();
-        _wdClient = false;
-        setProgress(i18n::tr("Slack didn't accept that session \xE2\x80\x94 sign in to Slack in the "
-                             "Summit window\xE2\x80\xA6"));
-        if (!_wdSession.empty())
-            wd("POST",
-               str::concat({"/session/", _wdSession, "/url"}),
-               str::concat({R"({"url":)", quoted(kSignInUrl), "}"}),
-               [](int, const json::Value &) {});
+        setProgress(i18n::tr("Waiting for you to finish signing in to Slack in the Summit "
+                             "window\xE2\x80\xA6"));
     });
 }
 

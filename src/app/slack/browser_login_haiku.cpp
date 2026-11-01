@@ -101,9 +101,9 @@ int openAutomation() {
     return running ? kHandOffMs : kSummitStartMs;
 }
 
-// DELETE /session/ID now, blocking (at most a few seconds): for teardown
-// while the app quits, when no request or timer would run any more.
-void deleteSessionNow(int port, const std::string &session) {
+// One blocking request to the driver (at most a few seconds): for teardown,
+// when no request or timer may run any more.
+void requestNow(int port, const std::string &method, const std::string &path) {
     const int fd = ::socket(AF_INET, SOCK_STREAM, 0);
     if (fd < 0)
         return;
@@ -116,7 +116,7 @@ void deleteSessionNow(int port, const std::string &session) {
     a.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
     if (::connect(fd, reinterpret_cast<sockaddr *>(&a), sizeof a) == 0) {
         const std::string req = str::concat(
-            {"DELETE /session/", session, " HTTP/1.1\r\nHost: 127.0.0.1:", str::number(port),
+            {method, " ", path, " HTTP/1.1\r\nHost: 127.0.0.1:", str::number(port),
              "\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"}
         );
         if (::send(fd, req.data(), req.size(), MSG_NOSIGNAL) == ssize_t(req.size())) {
@@ -126,6 +126,13 @@ void deleteSessionNow(int port, const std::string &session) {
         }
     }
     ::close(fd);
+}
+
+// Ends the session: its window first (a session on a Summit the driver did
+// not start leaves its windows open otherwise), then the session.
+void deleteSessionNow(int port, const std::string &session) {
+    requestNow(port, "DELETE", str::concat({"/session/", session, "/window"}));
+    requestNow(port, "DELETE", str::concat({"/session/", session}));
 }
 
 std::string quoted(std::string_view s) {
@@ -336,40 +343,74 @@ void BrowserLogin::wdPoll() {
                });
             return;
         }
-        wd("GET", base + "/cookie/d", {}, [this](int status, const json::Value &v) {
-            const std::string_view value = v["value"].str();
-            if (status != 200 || !str::startsWith(value, "xoxd-") || value == _rejected)
-                return; // not signed in yet (or still the session Slack refused)
-            // Verbatim, still percent-encoded as Slack stores it.
-            LOG_INFO("signin", "signed in: the session cookie is there");
-            _cookie     = std::string(value);
+        // Every cookie, not WebDriver's first `d`: a profile that used Slack
+        // before can hold more than one.
+        wd("GET", base + "/cookie", {}, [this](int status, const json::Value &v) {
+            if (status != 200)
+                return;
+            std::vector<std::string> found;
+            for (const json::Value c : v) {
+                const std::string_view value = c["value"].str();
+                if (c["name"].str() != "d" || !str::startsWith(value, "xoxd-"))
+                    continue;
+                // Verbatim, still percent-encoded as Slack stores it.
+                const std::string d(value);
+                if (std::find(_rejected.begin(), _rejected.end(), d) == _rejected.end() &&
+                    std::find(found.begin(), found.end(), d) == found.end())
+                    found.push_back(d);
+            }
+            if (found.empty())
+                return; // not signed in yet (or still only sessions Slack refused)
+            LOG_INFO("signin", "signed in: %zu session cookie(s) to try", found.size());
+            _cookies    = std::move(found);
+            _cookie     = _cookies.front();
             _cookieAtMs = double(base::monotonicMs());
             setProgress(i18n::tr("Signed in \xE2\x80\x94 looking up your workspaces\xE2\x80\xA6"));
         });
     });
 }
 
-// Asks Slack whether the cookie (with the workspaces' tokens, or ones
-// scraped fresh) is good before handing it over. A refused one is set aside
-// and the window goes back to the sign-in page.
-void BrowserLogin::wdVerify(std::vector<TeamSession> teams) {
+// Asks Slack whether a cookie (with the workspaces' tokens, or ones
+// scraped fresh) is good before handing it over: each of the browser's `d`
+// cookies in turn. While the web client may still be booting (its
+// localConfig_v2 can hold the previous session's tokens until it has), a
+// refusal is tried again on the next tick; after that the refused cookies are
+// set aside and the window goes back to the sign-in page.
+void BrowserLogin::wdVerify(std::vector<TeamSession> teams, size_t cookie) {
+    if (cookie >= _cookies.size())
+        return;
+    _cookie = _cookies[cookie];
     setProgress(i18n::tr("Verifying your session\xE2\x80\xA6"));
     _verifier = std::make_unique<TokenDeriver>(_client);
-    _verifier->run(_cookie, std::move(teams), [this](std::vector<Credentials> valid, std::string error) {
+    _verifier->run(_cookie, teams, [this, teams, cookie](std::vector<Credentials> valid, std::string error) {
         // Not deleted from inside its own callback.
         TokenDeriver *v = _verifier.release();
         _app.post([v] { delete v; });
         if (_done)
             return;
         if (!valid.empty()) {
+            LOG_INFO("signin", "Slack accepted the session (cookie %zu): %zu workspace(s)", cookie + 1,
+                     valid.size());
             std::vector<TeamSession> ok;
             for (const Credentials &c : valid)
                 ok.push_back({c.token, c.workspaceUrl, c.teamId, c.teamName, c.iconUrl});
             finish(_cookie, std::move(ok), {});
             return;
         }
-        LOG_INFO("signin", "Slack refused the browser's session (%s); waiting for a new sign-in", error.c_str());
-        _rejected = _cookie;
+        LOG_INFO("signin", "Slack refused cookie %zu of %zu (%s)", cookie + 1, _cookies.size(),
+                 error.c_str());
+        if (cookie + 1 < _cookies.size()) {
+            wdVerify(teams, cookie + 1);
+            return;
+        }
+        // The web client may not have booted yet: read its workspaces again.
+        if (double(base::monotonicMs()) - _wdClientMs < kTeamGraceMs) {
+            _cookie = _cookies.front();
+            return;
+        }
+        LOG_INFO("signin", "no session Slack accepts; waiting for a new sign-in");
+        _rejected.insert(_rejected.end(), _cookies.begin(), _cookies.end());
+        _cookies.clear();
         _cookie.clear();
         _wdClient = false;
         setProgress(i18n::tr("Slack didn't accept that session \xE2\x80\x94 sign in to Slack in the "

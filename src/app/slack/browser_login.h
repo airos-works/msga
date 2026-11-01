@@ -84,9 +84,11 @@ private:
     // jar may hold an expired `d` and its localStorage an earlier session's
     // tokens. A cookie is only taken once Slack accepts it; until then the
     // window stays open for a fresh sign-in.
-    void                          wdVerify(std::vector<TeamSession> teams);
+    void                          wdVerify(std::vector<TeamSession> teams, size_t cookie = 0);
     std::unique_ptr<TokenDeriver> _verifier;
-    std::string                   _rejected; // a cookie Slack refused
+    // Every distinct `d` the browser holds (an old host-only one may sit
+    // beside the new .slack.com one), and the ones Slack refused.
+    std::vector<std::string>      _cookies, _rejected;
 #endif
 
     void probe();

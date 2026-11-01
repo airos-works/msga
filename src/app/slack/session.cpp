@@ -1,5 +1,7 @@
 #include "app/slack/session.h"
 
+#include "base/log.h"
+
 #include "app/model/jobs.h"
 #include "app/slack/local_import.h"
 
@@ -197,6 +199,12 @@ void TokenDeriver::next() {
 }
 
 void TokenDeriver::fail(std::string why) {
+    if (_index < _queue.size()) {
+        net::Url u;
+        const bool host = u.parse(_queue[_index].workspaceUrl);
+        LOG_INFO("signin", "session check for %s failed: %s", host ? u.host.c_str() : "(no address)",
+                 why.c_str());
+    }
     _lastError = std::move(why);
     ++_index;
     next();
@@ -222,6 +230,8 @@ void TokenDeriver::derive(const TeamSession &cand) {
             return;
         }
         std::string token = scrapeToken(r.body);
+        LOG_INFO("signin", "workspace page: HTTP %d, %zu bytes, %s", r.status, r.body.size(),
+                 token.empty() ? "no session token" : "a session token");
         if (token.empty()) {
             fail("token_not_found");
             return;
@@ -239,6 +249,8 @@ void TokenDeriver::validate(const TeamSession &cand, std::string token) {
         {},
         [this, cand, token](const json::Document &doc, const std::string &err) {
             if (!err.empty()) {
+                LOG_INFO("signin", "auth.test: %s (%s token)", err.c_str(),
+                         token == cand.token ? "the browser's" : "a scraped");
                 // A token handed in with the candidate (a browser's
                 // localConfig_v2) can be older than the cookie: a browser
                 // profile that had signed in to Slack before keeps the last

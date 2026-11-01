@@ -264,6 +264,16 @@ int main(int argc, char **argv) {
     // A crash now prints a stack trace (stderr + crash.log, the file earlier
     // versions wrote too) instead of a bare "Segmentation fault", then still core-dumps.
     crash::install(identity::crashLogPath(pa));
+#ifdef __HAIKU__
+    // Started from Deskbar or Tracker, stderr goes nowhere: the log (no
+    // tokens or cookies in it) goes to a file in the cache as well, one run's.
+    if (const std::string dir = identity::cacheDir(pa); !dir.empty()) {
+        file::makeDirs(dir);
+        const std::string log = file::join(dir, "msga.log");
+        std::remove(log.c_str());
+        base::setLogFile(log.c_str());
+    }
+#endif
     // Dev builds only: the main-thread hang watchdog (crash_handler.h), its
     // heartbeat started below. AddressSanitizer makes everything ~5-10x
     // slower, so ASan builds get a roomier window and only genuine hangs fire.

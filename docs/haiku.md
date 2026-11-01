@@ -74,5 +74,8 @@ as above.
 - Haiku's runtime_loader has no `DT_RELR`: packed relocations are off there.
 - No `eventfd` and no `getrandom` on Haiku: the transport's wake fds are
   pipes, random bytes come from `getentropy`.
+- packagefs keeps a directory's mtime when a package adds files to it: the
+  font index also watches the package folders, or a newly installed font
+  package (noto_emoji_color) would go unseen until the cache is deleted.
 - BWindow eats every Command+key it has no shortcut for: the window passes
   them all to the view (Command+Q still asks MSGA to quit).

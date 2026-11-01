@@ -438,6 +438,13 @@ std::vector<std::string> fontRoots() {
     }
     roots.push_back("/boot/system/non-packaged/data/fonts");
     roots.push_back("/boot/system/data/fonts");
+    // packagefs keeps a directory's mtime when a package adds fonts to it
+    // (noto_emoji_color, a script's fonts): the package folders change
+    // instead, so the cache, which checks the mtimes of what it walked,
+    // walks them too (they hold no fonts).
+    if (!h.empty())
+        roots.push_back(h + "/config/packages");
+    roots.push_back("/boot/system/packages");
     return roots;
 #endif
 #ifdef __APPLE__

@@ -1,0 +1,21 @@
+# Builds the air/OS packages (x86_64 and arm64) on every push to airos and
+# publishes them to the rolling "latest" release, with links in the README.
+# The images build MSGA themselves, in Deskbar's Office folder, at the commit
+# pinned in airos-works/airos-ci apps/office.lock.json, which must be on
+# airos. The pipeline itself lives in airos-works/airos-ci
+# (apps/build-app-packages.sh, build_msga).
+name: air/OS build
+
+on:
+  push:
+    branches: [airos]
+  workflow_dispatch:
+
+jobs:
+  airos:
+    uses: airos-works/airos-ci/.github/workflows/app.yml@main
+    with:
+      app: msga
+      repo-dir: msga
+    permissions:
+      contents: write

@@ -17,6 +17,11 @@
 //   (Fetch interception), which is also the completion signal;
 // - Chromium rewrites profile files while shutting down: the wipe is retried.
 // Firefox speaks WebDriver BiDi, not CDP — not supported.
+//
+// air/OS (browser_login_haiku.cpp): Summit, driven through its WebDriver
+// service (summitdriver): the same sign-in page, the `d` cookie read with
+// WebDriver's cookie command and the workspaces from the web client's
+// localConfig_v2, with Summit's own window and a throwaway profile.
 #pragma once
 
 #include "app/slack/session.h"
@@ -60,6 +65,20 @@ public:
 
 private:
     using Handler = std::function<void(const json::Value &result, bool ok)>;
+#ifdef __HAIKU__
+    // air/OS (browser_login_haiku.cpp): Summit through its WebDriver service
+    // (summitdriver), not Chromium's DevTools protocol.
+    using WdDone = std::function<void(int status, const json::Value &value)>;
+    void wd(std::string method, std::string path, std::string body, WdDone done);
+    void wdStep();
+    void wdPoll();
+    std::string    _driverExe;
+    std::string    _wdSession;
+    net::RequestId _wdReq      = 0;
+    int            _wdState    = 0;
+    bool           _wdClient   = false; // navigated to the web client for its workspaces
+    double         _wdClientMs = 0;
+#endif
 
     void probe();
     void openCdp(const std::string &wsUrl);

@@ -60,11 +60,12 @@ target_link_libraries(msga_app_core PUBLIC msga_base plat msga_flags PRIVATE msg
 
 # msga_app_slack — the Slack service: sign-in (session cookie via a driven
 # browser or a paste, OAuth app keys), the Web API, the workspace backend.
+# The driven browser is Chromium over CDP, or on air/OS Summit over WebDriver.
 add_library(msga_app_slack STATIC
     slack/credentials.cpp
     slack/web_api.cpp
     slack/session.cpp
-    slack/browser_login.cpp
+    $<IF:$<BOOL:${HAIKU}>,slack/browser_login_haiku.cpp,slack/browser_login.cpp>
     slack/oauth.cpp
     slack/slack_backend.cpp
     slack/slack_backend_core.cpp

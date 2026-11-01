@@ -447,7 +447,19 @@ void initSpawnAttr(posix_spawnattr_t *attr) {
     posix_spawnattr_init(attr);
     sigset_t none, all;
     sigemptyset(&none);
+#ifdef __HAIKU__
+    // Only the signals whose handler can be changed: Haiku's posix_spawn
+    // fails outright when asked to reset SIGKILL, SIGSTOP, SIGKILLTHR or the
+    // kernel's private thread signals (Linux skips them).
+    sigemptyset(&all);
+    for (int sig = 1; sig < NSIG; ++sig) {
+        struct sigaction old {};
+        if (sigaction(sig, nullptr, &old) == 0)
+            sigaddset(&all, sig);
+    }
+#else
     sigfillset(&all);
+#endif
     posix_spawnattr_setsigmask(attr, &none);
     posix_spawnattr_setsigdefault(attr, &all);
     short flags = POSIX_SPAWN_SETSIGMASK | POSIX_SPAWN_SETSIGDEF;

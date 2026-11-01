@@ -1,5 +1,12 @@
 # Make Slack Great Again
 
+> **This is the air/OS fork** (`airos-works/msga`, branch `airos`): msga running
+> natively on [air/OS](https://github.com/airos-works) (Haiku) on x86_64 and
+> ARM64, on the Be API — `BWindow`/`BBitmap` drawing, the system clipboard,
+> notifications, file panels and keyring, the Media Kit for audio, the
+> system's OpenSSL for TLS and Summit for browser sign-in. air/OS images have
+> it in Deskbar's **Office** folder. See [docs/haiku.md](docs/haiku.md).
+
 A fast native Slack client built in C++, on its own platform, network and graphics layers: no Electron, no web view, no GUI toolkit.
 
 ## About

@@ -30,6 +30,11 @@
 #include "plat/plat.h"
 
 #include <algorithm>
+#include <arpa/inet.h>
+#include <netinet/in.h>
+#include <sys/socket.h>
+#include <sys/time.h>
+#include <unistd.h>
 #include <cstdlib>
 
 namespace slack {
@@ -84,6 +89,33 @@ void wipeProfile(const std::string &path) {
         file::removeTree(path);
 }
 
+// DELETE /session/ID now, blocking (at most a few seconds): for teardown
+// while the app quits, when no request or timer would run any more.
+void deleteSessionNow(int port, const std::string &session) {
+    const int fd = ::socket(AF_INET, SOCK_STREAM, 0);
+    if (fd < 0)
+        return;
+    timeval tv{3, 0};
+    setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof tv);
+    setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof tv);
+    sockaddr_in a{};
+    a.sin_family      = AF_INET;
+    a.sin_port        = htons(uint16_t(port));
+    a.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+    if (::connect(fd, reinterpret_cast<sockaddr *>(&a), sizeof a) == 0) {
+        const std::string req = str::concat(
+            {"DELETE /session/", session, " HTTP/1.1\r\nHost: 127.0.0.1:", str::number(port),
+             "\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"}
+        );
+        if (::send(fd, req.data(), req.size(), MSG_NOSIGNAL) == ssize_t(req.size())) {
+            char buf[512];
+            while (::recv(fd, buf, sizeof buf, 0) > 0) {
+            }
+        }
+    }
+    ::close(fd);
+}
+
 std::string quoted(std::string_view s) {
     std::string out;
     json::escapeString(out, s);
@@ -106,7 +138,15 @@ BrowserLogin::BrowserLogin(plat::App &app, net::Client &client) : _app(app), _cl
 
 BrowserLogin::~BrowserLogin() {
     _done = true; // no callbacks out of a half-destroyed object
+    // The dialog (or the app) goes now: no request or timer of shutdown()
+    // may run any more, so the window and the driver go here and now.
+    if (!_wdSession.empty() && _port) {
+        deleteSessionNow(_port, _wdSession);
+        _wdSession.clear();
+    }
     shutdown();
+    if (_proc && _proc->running())
+        _proc->kill(false);
 }
 
 void BrowserLogin::setProgress(std::string s) {
@@ -169,7 +209,7 @@ void BrowserLogin::wd(std::string method, std::string path, std::string body, Wd
 }
 
 void BrowserLogin::wdStep() {
-    if (_done || _wdReq)
+    if (_done || _wdReq || _verifier)
         return;
     const double now = double(base::monotonicMs());
     if (now - _startMs > kOverallTimeoutMs) {
@@ -267,22 +307,63 @@ void BrowserLogin::wdPoll() {
                    if (status == 200 && v.isString())
                        teams = parseLocalConfig(v.str());
                    if (!teams.empty())
-                       finish(_cookie, std::move(teams), {});
-                   else if (double(base::monotonicMs()) - _wdClientMs > kTeamGraceMs)
-                       finish(_cookie, hostTeams(), {});
+                       wdVerify(std::move(teams));
+                   else if (double(base::monotonicMs()) - _wdClientMs > kTeamGraceMs) {
+                       // No workspace list: the ones the pages named, if
+                       // any, checked like the others; none, the address
+                       // is asked for.
+                       std::vector<TeamSession> hosts = hostTeams();
+                       if (hosts.empty())
+                           finish(_cookie, {}, {});
+                       else
+                           wdVerify(std::move(hosts));
+                   }
                });
             return;
         }
         wd("GET", base + "/cookie/d", {}, [this](int status, const json::Value &v) {
             const std::string_view value = v["value"].str();
-            if (status != 200 || !str::startsWith(value, "xoxd-"))
-                return; // not signed in yet
+            if (status != 200 || !str::startsWith(value, "xoxd-") || value == _rejected)
+                return; // not signed in yet (or still the session Slack refused)
             // Verbatim, still percent-encoded as Slack stores it.
             LOG_INFO("signin", "signed in: the session cookie is there");
             _cookie     = std::string(value);
             _cookieAtMs = double(base::monotonicMs());
             setProgress(i18n::tr("Signed in \xE2\x80\x94 looking up your workspaces\xE2\x80\xA6"));
         });
+    });
+}
+
+// Asks Slack whether the cookie (with the workspaces' tokens, or ones
+// scraped fresh) is good before handing it over. A refused one is set aside
+// and the window goes back to the sign-in page.
+void BrowserLogin::wdVerify(std::vector<TeamSession> teams) {
+    setProgress(i18n::tr("Verifying your session\xE2\x80\xA6"));
+    _verifier = std::make_unique<TokenDeriver>(_client);
+    _verifier->run(_cookie, std::move(teams), [this](std::vector<Credentials> valid, std::string error) {
+        // Not deleted from inside its own callback.
+        TokenDeriver *v = _verifier.release();
+        _app.post([v] { delete v; });
+        if (_done)
+            return;
+        if (!valid.empty()) {
+            std::vector<TeamSession> ok;
+            for (const Credentials &c : valid)
+                ok.push_back({c.token, c.workspaceUrl, c.teamId, c.teamName, c.iconUrl});
+            finish(_cookie, std::move(ok), {});
+            return;
+        }
+        LOG_INFO("signin", "Slack refused the browser's session (%s); waiting for a new sign-in", error.c_str());
+        _rejected = _cookie;
+        _cookie.clear();
+        _wdClient = false;
+        setProgress(i18n::tr("Slack didn't accept that session \xE2\x80\x94 sign in to Slack in the "
+                             "Summit window\xE2\x80\xA6"));
+        if (!_wdSession.empty())
+            wd("POST",
+               str::concat({"/session/", _wdSession, "/url"}),
+               str::concat({R"({"url":)", quoted(kSignInUrl), "}"}),
+               [](int, const json::Value &) {});
     });
 }
 
@@ -313,11 +394,9 @@ void BrowserLogin::shutdown() {
     // driver started; then the driver goes, and the profile (and the cookie
     // in it) with it.
     if (!_wdSession.empty() && _port) {
-        net::Request req;
-        req.method    = "DELETE";
-        req.url       = str::concat({"http://127.0.0.1:", str::number(_port), "/session/", _wdSession});
-        req.timeoutMs = 5000;
-        _client.send(std::move(req), [](net::Response) {});
+        // At once (the driver answers in milliseconds): whoever owns this
+        // may destroy it, and kill the driver, right after.
+        deleteSessionNow(_port, _wdSession);
         _wdSession.clear();
     }
     auto              proc = _proc;

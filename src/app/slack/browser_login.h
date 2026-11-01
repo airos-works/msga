@@ -78,6 +78,13 @@ private:
     int            _wdState    = 0;
     bool           _wdClient   = false; // navigated to the web client for its workspaces
     double         _wdClientMs = 0;
+    // The sign-in happens in the user's own Summit when one runs: its cookie
+    // jar may hold an expired `d` and its localStorage an earlier session's
+    // tokens. A cookie is only taken once Slack accepts it; until then the
+    // window stays open for a fresh sign-in.
+    void                          wdVerify(std::vector<TeamSession> teams);
+    std::unique_ptr<TokenDeriver> _verifier;
+    std::string                   _rejected; // a cookie Slack refused
 #endif
 
     void probe();

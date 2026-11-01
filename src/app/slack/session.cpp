@@ -239,6 +239,17 @@ void TokenDeriver::validate(const TeamSession &cand, std::string token) {
         {},
         [this, cand, token](const json::Document &doc, const std::string &err) {
             if (!err.empty()) {
+                // A token handed in with the candidate (a browser's
+                // localConfig_v2) can be older than the cookie: a browser
+                // profile that had signed in to Slack before keeps the last
+                // session's tokens until its web client boots again. Scrape a
+                // fresh one from the workspace with this cookie instead.
+                if (err == "invalid_auth" && token == cand.token && !cand.workspaceUrl.empty()) {
+                    TeamSession fresh = cand;
+                    fresh.token.clear();
+                    derive(fresh);
+                    return;
+                }
                 fail(err);
                 return;
             }

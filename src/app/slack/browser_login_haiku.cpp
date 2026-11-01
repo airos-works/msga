@@ -50,6 +50,12 @@ namespace {
 constexpr int kPollIntervalMs   = 500;
 constexpr int kDriverTimeoutMs  = 20000;  // summitdriver started → answering /status
 constexpr int kTeamGraceMs      = 15000;  // the web client's boot after the login
+// After the window first shows a signed-in page, before Slack is asked
+// anything: the web client finishes its own boot first.
+constexpr int kSettleMs = 4000;
+// No answer from the driver for this long: it is wedged (a window gone under
+// it); give up rather than show "Verifying" for ever.
+constexpr int kDriverSilentMs = 60000;
 // Signing in may take a while: SSO, a second factor, a code from the mail.
 constexpr int kOverallTimeoutMs = 20 * 60 * 1000;
 constexpr int kHttpTimeoutMs    = 30000;
@@ -238,6 +244,8 @@ void BrowserLogin::wd(std::string method, std::string path, std::string body, Wd
         _wdReq = 0;
         if (_done)
             return;
+        if (r.status != 0)
+            _wdHeardMs = double(base::monotonicMs());
         json::Document doc;
         if (r.status == 0 || !doc.parse(r.body, nullptr)) {
             done(r.status, json::Value());
@@ -254,6 +262,11 @@ void BrowserLogin::wdStep() {
     if (now - _startMs > kOverallTimeoutMs) {
         finish(_cookie, _cookie.empty() ? std::vector<TeamSession>() : hostTeams(),
                _cookie.empty() ? "timeout" : "");
+        return;
+    }
+    if (_wdState >= 3 && _wdHeardMs > 0 && now - _wdHeardMs > kDriverSilentMs) {
+        LOG_INFO("signin", "summitdriver stopped answering");
+        finish({}, {}, "cdp_failed");
         return;
     }
     if (!_proc->running()) {
@@ -338,6 +351,8 @@ void BrowserLogin::wdPoll() {
             LOG_INFO("signin", "the window shows a signed-in page");
             setProgress(i18n::tr("Signed in \xE2\x80\x94 looking up your workspaces\xE2\x80\xA6"));
         }
+        if (double(base::monotonicMs()) - _wdClientMs < kSettleMs)
+            return;
         const bool handoff = url.find("/ssb/") != std::string::npos;
         // Every cookie, not WebDriver's first `d`: a profile that used Slack
         // before can hold more than one.
@@ -376,6 +391,13 @@ void BrowserLogin::wdPoll() {
                    std::vector<TeamSession> teams;
                    if (status == 200 && v.isString())
                        teams = parseLocalConfig(v.str());
+                   // The workspaces only, never their stored tokens: in a
+                   // profile that signed in before they can be an earlier
+                   // session's, and Slack revokes a fresh session presented
+                   // with a token that isn't its own. Fresh ones are scraped
+                   // from each workspace with the cookie.
+                   for (TeamSession &t : teams)
+                       t.token.clear();
                    if (!teams.empty())
                        wdVerify(std::move(teams));
                    else if (double(base::monotonicMs()) - _wdClientMs > kTeamGraceMs) {

@@ -80,6 +80,7 @@ private:
     bool           _wdClient   = false; // navigated to the web client for its workspaces
     double         _wdClientMs = 0;
     double         _summitReadyMs = 0; // a Summit msga started: when to hand it the session
+    double         _wdHeardMs     = 0; // the driver's last answer
     // The sign-in happens in the user's own Summit when one runs: its cookie
     // jar may hold an expired `d` and its localStorage an earlier session's
     // tokens. A cookie is only taken once Slack accepts it; until then the

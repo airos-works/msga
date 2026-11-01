@@ -9,6 +9,19 @@
 
 A fast native Slack client built in C++, on its own platform, network and graphics layers: no Electron, no web view, no GUI toolkit.
 
+<!-- airos-ci:latest-builds:start -->
+## Latest builds
+
+Built automatically by air/OS CI from commit `840ec40` on 2026-11-01 ([all files](https://github.com/airos-works/msga/releases/tag/latest)).
+
+| Architecture | Package |
+|---|---|
+| arm64 | [msga-43.airos1-1-arm64.hpkg](https://github.com/airos-works/msga/releases/download/latest/msga-43.airos1-1-arm64.hpkg) |
+| x86_64 | [msga-43.airos1-1-x86_64.hpkg](https://github.com/airos-works/msga/releases/download/latest/msga-43.airos1-1-x86_64.hpkg) |
+
+Install with `pkgman install <file>`, or copy the file into `/boot/system/packages`. Haiku SDK: x86_64 hrev60207-2226-g250d12cdb0, arm64 hrev60207-2226-g250d12cdb0.
+<!-- airos-ci:latest-builds:end -->
+
 ## About
 
 msga is a Slack client first and foremost. Channels, DMs, threads, reactions, files and notifications all work the way you expect from Slack, in a window that starts instantly and needs a fraction of the memory of the official app. As a side feature, msga can also show your Claude Code sessions in the same workspace rail, each one as a direct message.

@@ -9,6 +9,20 @@
 option(MSGA_MBEDTLS_COOKIE_CRYPTO
     "Build AES-CBC + PBKDF2-HMAC-SHA1 into mbedTLS instead of doing it ourselves" OFF)
 
+# air/OS (Haiku): TLS and AES from the system's OpenSSL 3 (every install has
+# it; tls_openssl.cpp), verified against the system's CA store. No mbedTLS.
+if(HAIKU)
+    target_sources(msga_net PRIVATE
+        posix/socket.cpp
+        posix/loopback.cpp
+        posix/tls_openssl.cpp
+        posix/http.cpp
+        posix/ws.cpp
+        posix/aes_openssl.cpp)
+    target_link_libraries(msga_net PRIVATE ssl crypto)
+    return()
+endif()
+
 # ── mbedTLS ─────────────────────────────────────────────────────────────────
 # The official release tarball (it carries the generated sources the git
 # archive lacks), pinned by hash. SOURCE_SUBDIR points at nothing so its own

@@ -595,7 +595,11 @@ std::string iniPath(std::string_view app) {
         const std::string home = base::env("HOME");
         if (home.empty())
             return {};
+#ifdef __HAIKU__
+        dir = file::join(home, "config/settings"); // where air/OS apps keep settings
+#else
         dir = file::join(home, ".config");
+#endif
     }
     return file::join(dir, str::concat({"msga/", app, ".conf"}));
 }

@@ -18,6 +18,9 @@ std::unique_ptr<App> createX11App(std::string *error);
 #if defined(_WIN32)
 std::unique_ptr<App> createWin32App(std::string *error);
 #endif
+#if defined(PLAT_HAS_HAIKU)
+std::unique_ptr<App> createHaikuApp(std::string *error);
+#endif
 #if defined(__APPLE__)
 std::unique_ptr<App> createCocoaApp(std::string *error);
 #endif

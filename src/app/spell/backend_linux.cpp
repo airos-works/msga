@@ -74,6 +74,16 @@ std::vector<std::string> dictionaryDirs() {
     for (std::string_view d; parts.next(&d);)
         if (!d.empty())
             dirs.emplace_back(d);
+#ifdef __HAIKU__
+    // HaikuPorts' myspell_<lang> packages, and the user's own.
+    if (const std::string home = base::homeDir(); !home.empty()) {
+        dirs.push_back(home + "/config/non-packaged/data/hunspell");
+        dirs.push_back(home + "/config/data/hunspell");
+    }
+    dirs.emplace_back("/boot/system/non-packaged/data/hunspell");
+    dirs.emplace_back("/boot/system/data/hunspell");
+    return dirs;
+#endif
     std::string data = base::env("XDG_DATA_HOME");
     if (const std::string home = base::homeDir(); data.empty() && !home.empty())
         data = home + "/.local/share";
@@ -314,6 +324,10 @@ std::string dictionaryPackageHint(const std::vector<std::string> &preferred) {
     const std::string lang = sys.substr(0, sys.find('_'));
     const std::string terr =
         sys.find('_') == std::string::npos ? std::string() : sys.substr(sys.find('_') + 1);
+#ifdef __HAIKU__
+    // HaikuPorts: one myspell package per language (pkgman install myspell_en).
+    return "myspell_" + (lang.empty() ? std::string("en") : lang);
+#endif
     if (lang.empty())
         return "hunspell-en-us";
     const std::string os  = osFamily();

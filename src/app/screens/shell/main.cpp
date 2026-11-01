@@ -391,7 +391,11 @@ int main(int argc, char **argv) {
 #endif
     desc.size        = {settings.width, settings.height};
     desc.minSize     = shell::Shell::kMinWindowSize; // fitToScreen lowers it on small screens
+#ifdef __HAIKU__
+    desc.decorations = plat::Decorations::System; // the native window tab
+#else
     desc.decorations = plat::Decorations::Custom;
+#endif
     if (settings.hasPosition)
         desc.position = plat::Point{double(settings.x), double(settings.y)};
     ui::Window win(desc);

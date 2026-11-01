@@ -56,7 +56,8 @@ endif()
 # Packed relative relocations (DT_RELR): a PIE's vtable and function-pointer
 # fixups shrink from 24 bytes each (~180 KB of .rela.dyn) to a bitmap of ~5 KB.
 # Needs glibc 2.36 / musl 1.2.4 at run time; a static non-PIE has none anyway.
-if(NOT APPLE AND NOT MINGW)
+# Haiku's runtime_loader has no DT_RELR.
+if(NOT APPLE AND NOT MINGW AND NOT HAIKU)
     if(MSGA_HAVE_LLD)
         set(CMAKE_REQUIRED_LINK_OPTIONS -fuse-ld=lld)
     endif()
@@ -137,8 +138,15 @@ endif()
 # msga replacing its own binary with the next release (app/update), and, on
 # Linux, writing its own ~/.local/share/applications/msga.desktop on every
 # start (screens/shell/desktop_entry.cpp), which names this build's path.
-option(MSGA_SELF_UPDATE "Check msga.app for new releases and install them" ON)
-option(MSGA_INSTALL_LAUNCHER "Linux: write the user's msga.desktop launcher entry at startup" ON)
+# air/OS: the package manager updates msga, and its package has the Deskbar
+# entry: both off there.
+if(HAIKU)
+    set(_msga_self_default OFF)
+else()
+    set(_msga_self_default ON)
+endif()
+option(MSGA_SELF_UPDATE "Check msga.app for new releases and install them" ${_msga_self_default})
+option(MSGA_INSTALL_LAUNCHER "Linux: write the user's msga.desktop launcher entry at startup" ${_msga_self_default})
 # On msga_flags: the updater's UI (the update bar, Settings' update checks)
 # and its tests compile out with it, not only app/update.
 foreach(opt MSGA_SELF_UPDATE MSGA_INSTALL_LAUNCHER)

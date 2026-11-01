@@ -8,3 +8,5 @@ build-cov/
 credentials.cmake
 .DS_Store
 result
+build-haiku-*/
+__pycache__/

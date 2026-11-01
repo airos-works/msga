@@ -4,8 +4,9 @@
 # APIs are used (no hb-ft, no hb-glib/icu, no FreeType modules beyond
 # sfnt/truetype/cff/autofit/smooth): Linux dev builds link the distribution's
 # libraries through pkg-config; macOS, Windows and the static Linux release
-# build trimmed copies (font_libs.cmake).
-if(APPLE OR WIN32 OR MSGA_STATIC)
+# build trimmed copies (font_libs.cmake), and so does air/OS, whose arm64 SDK
+# has no HarfBuzz.
+if(APPLE OR WIN32 OR HAIKU OR MSGA_STATIC)
     set(_bundled_default ON)
 else()
     set(_bundled_default OFF)

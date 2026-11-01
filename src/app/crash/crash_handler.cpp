@@ -507,6 +507,13 @@ void abortHandler(int) {
 namespace crash {
 
 void install(const std::string &logPath) {
+#ifdef __HAIKU__
+    // air/OS's debug_server catches crashes itself: it offers to debug the
+    // team or saves a report with every thread's symbolised stack, far more
+    // than a signal handler can write. Leave the signals to it.
+    (void)logPath;
+    return;
+#endif
     if (!logPath.empty())
         file::makeDirs(file::dirName(logPath));
 

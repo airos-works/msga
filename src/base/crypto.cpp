@@ -10,6 +10,8 @@
 #include <bcrypt.h>
 #elif defined(__APPLE__)
 #include <stdlib.h>
+#elif defined(__HAIKU__)
+#include <unistd.h>
 #else
 #include <cerrno>
 #include <sys/random.h>
@@ -263,6 +265,17 @@ bool randomBytes(void *out, size_t n) {
            ) == 0;
 #elif defined(__APPLE__)
     arc4random_buf(out, n);
+    return true;
+#elif defined(__HAIKU__)
+    // The kernel's random pool, at most 256 bytes a call.
+    auto *p = static_cast<uint8_t *>(out);
+    while (n > 0) {
+        const size_t chunk = n < 256 ? n : 256;
+        if (getentropy(p, chunk) != 0)
+            return false;
+        p += chunk;
+        n -= chunk;
+    }
     return true;
 #else
     auto *p = static_cast<uint8_t *>(out);

@@ -48,7 +48,9 @@ const char *keyName(Key k) {
 }
 
 uint32_t primaryMod() {
-#if defined(__APPLE__)
+    // air/OS's shortcut key is Command (the Alt key by default), which the
+    // Haiku backend reports as Super, as macOS's.
+#if defined(__APPLE__) || defined(__HAIKU__)
     return ModSuper;
 #else
     return ModCtrl;
@@ -106,6 +108,8 @@ std::unique_ptr<App> App::create(std::string *error) {
     return createWin32App(error);
 #elif defined(__APPLE__)
     return createCocoaApp(error);
+#elif defined(PLAT_HAS_HAIKU)
+    return createHaikuApp(error);
 #else
     std::string why;
 #if defined(PLAT_HAS_WAYLAND)

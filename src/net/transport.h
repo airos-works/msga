@@ -52,6 +52,9 @@ public:
 private:
     std::atomic<bool> _flag{false};
     intptr_t          _os = -1;
+#ifdef __HAIKU__
+    int _osWrite = -1; // Haiku has no eventfd: _os is a pipe's read end, this its write end
+#endif
 };
 
 // One HTTP exchange — no redirect following, no cookie handling, no

@@ -3,6 +3,12 @@
 #include "base/i18n.h"
 #include "base/str.h"
 
+#ifdef __HAIKU__
+#include <InterfaceDefs.h>
+
+#include <cstdlib>
+#endif
+
 namespace shell::shortcuts {
 
 namespace {
@@ -140,6 +146,19 @@ std::string portableName(plat::Key k) {
     }
 }
 
+#ifdef __HAIKU__
+const char *commandKeyName() {
+    key_map *keys  = nullptr;
+    char    *chars = nullptr;
+    get_key_map(&keys, &chars);
+    // 0x5c / 0x60: the Ctrl keys; anything else is the Alt keys' default.
+    const bool ctrl = keys && (keys->left_command_key == 0x5c || keys->left_command_key == 0x60);
+    free(keys);
+    free(chars);
+    return ctrl ? "Ctrl" : "Alt";
+}
+#endif
+
 std::vector<std::string> tokens(const Keys &k) {
     // In spelling order (Ctrl, Alt, Shift), each token rendered natively.
     std::vector<std::string> out;
@@ -150,11 +169,13 @@ std::vector<std::string> tokens(const Keys &k) {
         out.emplace_back("\xE2\x8C\xA5"); // ⌥
     if (k.mods & Shift)
         out.emplace_back("\xE2\x87\xA7"); // ⇧
-#else
+#elif defined(__HAIKU__)
+    // The shortcut key is Command: Alt by default, Ctrl when the Keymap
+    // preferences swap them; plat's Alt is Option (the Windows key).
     if (k.mods & Ctrl)
-        out.emplace_back("Ctrl");
+        out.emplace_back(commandKeyName());
     if (k.mods & Alt)
-        out.emplace_back("Alt");
+        out.emplace_back("Option");
     if (k.mods & Shift)
         out.emplace_back("Shift");
 #endif

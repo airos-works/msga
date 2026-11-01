@@ -5,10 +5,18 @@
 #            public domain / MIT-0; decoding only, device I/O compiled out).
 #   Windows: MFPlay (Media Foundation) + waveIn/PlaySound (winmm).
 #   macOS:   AVAudioPlayer / AVAudioRecorder (AVFoundation) + NSSound.
+#   Haiku:   the Media Kit: BMediaFile/BMediaTrack decode (every codec the
+#            system's media add-ons have, AAC included), BSoundPlayer plays,
+#            BMediaRecorder captures; sounds through the same player.
 target_sources(plat PRIVATE src/audio/audio_common.cpp)
 if(WIN32)
     target_sources(plat PRIVATE src/audio/audio_win32.cpp)
     target_link_libraries(plat PUBLIC mfplay mfplat winmm ole32)
+elseif(HAIKU)
+    target_sources(plat PRIVATE src/audio/audio_haiku.cpp)
+    # It derives Media Kit classes, which the Be API dynamic_casts.
+    set_source_files_properties(src/audio/audio_haiku.cpp PROPERTIES COMPILE_OPTIONS "-frtti")
+    target_link_libraries(plat PUBLIC media be)
 elseif(APPLE)
     target_sources(plat PRIVATE src/audio/audio_cocoa.mm)
     set_source_files_properties(src/audio/audio_cocoa.mm PROPERTIES COMPILE_OPTIONS "-fobjc-arc")

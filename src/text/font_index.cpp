@@ -429,6 +429,17 @@ std::vector<std::string> fontRoots() {
     return roots;
 #endif
     const std::string h = base::homeDir();
+#ifdef __HAIKU__
+    // What app_server reads: the user's fonts, then the system's (Noto Sans,
+    // Noto Color Emoji and the Noto scripts ship with every install).
+    if (!h.empty()) {
+        roots.push_back(h + "/config/non-packaged/data/fonts");
+        roots.push_back(h + "/config/data/fonts");
+    }
+    roots.push_back("/boot/system/non-packaged/data/fonts");
+    roots.push_back("/boot/system/data/fonts");
+    return roots;
+#endif
 #ifdef __APPLE__
     if (!h.empty())
         roots.push_back(h + "/Library/Fonts");
@@ -511,6 +522,8 @@ std::string cachePath() {
     return (l.empty() ? base::env("TEMP") : l) + "/msga/MSGA/cache/fonts.idx";
 #elif defined(__APPLE__)
     return base::homeDir() + "/Library/Caches/msga/MSGA/fonts.idx";
+#elif defined(__HAIKU__)
+    return base::homeDir() + "/config/cache/msga/MSGA/fonts.idx";
 #endif
     if (const char *x = std::getenv("XDG_CACHE_HOME"); x && *x)
         return std::string(x) + "/msga/MSGA/fonts.idx";

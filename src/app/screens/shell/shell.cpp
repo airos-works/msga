@@ -1183,6 +1183,11 @@ void Shell::buildTitleBar(View *parent) {
     _titleLabel->setAlign(text::LayoutOptions::Align::Center);
     _titleLabel->setHitTransparent(true);
     _titleLabel->style().margins(112, 0, 112, 1);
+#elif defined(__HAIKU__)
+    // air/OS draws the window's tab (title, zoom, close, Deskbar's minimise):
+    // no strip of our own.
+    _titleBarH = 0;
+    _titleBar->style().row().height(0).noShrink();
 #else
     _titleBarH = kTitleBarH;
     _titleBar->style().row().height(kTitleBarH).noShrink().items(Align::Center);
@@ -1190,7 +1195,7 @@ void Shell::buildTitleBar(View *parent) {
 #endif
     strip->onStyleChanged = [this] { syncChrome(); };
     syncChrome();
-#ifndef __APPLE__ // macOS keeps its traffic lights
+#if !defined(__APPLE__) && !defined(__HAIKU__) // macOS keeps its traffic lights, air/OS its tab
     auto chrome = [&](Icon icon, const char *tip, bool danger) {
         auto *b = _titleBar->add<IconButton>(icon, tip);
         b->style().size(40, kTitleBarH);

@@ -17,12 +17,46 @@
 #include <netinet/in.h>
 #include <netinet/tcp.h>
 #include <poll.h>
+#ifdef __HAIKU__
+#else
 #include <sys/eventfd.h>
+#endif
 #include <sys/socket.h>
 #include <time.h>
 #include <unistd.h>
 
 namespace net::detail {
+
+namespace {
+
+// A wake fd: readable once signalled. An eventfd (one fd), or on Haiku,
+// which has none, a pipe: *writeEnd is where the signal goes.
+int makeWakeFd(int *writeEnd) {
+#ifdef __HAIKU__
+    int p[2];
+    if (pipe(p) != 0)
+        return -1;
+    for (int fd : p) {
+        fcntl(fd, F_SETFL, fcntl(fd, F_GETFL) | O_NONBLOCK);
+        fcntl(fd, F_SETFD, FD_CLOEXEC);
+    }
+    *writeEnd = p[1];
+    return p[0];
+#else
+    const int fd = eventfd(0, EFD_NONBLOCK | EFD_CLOEXEC);
+    *writeEnd    = fd;
+    return fd;
+#endif
+}
+
+void closeWakeFd(int readEnd, int writeEnd) {
+    if (readEnd >= 0)
+        ::close(readEnd);
+    if (writeEnd >= 0 && writeEnd != readEnd)
+        ::close(writeEnd);
+}
+
+} // namespace
 
 // tls.cpp
 struct TlsConn;
@@ -35,6 +69,21 @@ bool     tlsPending(const TlsConn *c);
 
 // An eventfd: readable from set() on, so a waitFd with it as the wake fd
 // returns Cancelled at once (and every later wait sees the flag first).
+#ifdef __HAIKU__
+Cancel::Cancel() : _os(makeWakeFd(&_osWrite)) {}
+
+Cancel::~Cancel() {
+    closeWakeFd(int(_os), _osWrite);
+}
+
+void Cancel::set() {
+    _flag.store(true, std::memory_order_release);
+    if (_osWrite >= 0) {
+        const uint64_t                 one = 1;
+        [[maybe_unused]] const ssize_t r   = ::write(_osWrite, &one, sizeof one);
+    }
+}
+#else
 Cancel::Cancel() : _os(eventfd(0, EFD_NONBLOCK | EFD_CLOEXEC)) {}
 
 Cancel::~Cancel() {
@@ -49,6 +98,7 @@ void Cancel::set() {
         [[maybe_unused]] const ssize_t r   = ::write(int(_os), &one, sizeof one);
     }
 }
+#endif
 
 Wait waitFd(int fd, short events, const Waiter &w, bool returnOnWake) {
     for (;;) {
@@ -189,7 +239,8 @@ struct Lookup {
     std::string      host, port;
     addrinfo        *result = nullptr;
     int              rc     = 0;
-    int              fd     = -1;
+    int              fd     = -1; // read end
+    int              wfd    = -1; // write end (the same fd for an eventfd)
     std::atomic<int> refs{2};
 
     void release() {
@@ -197,8 +248,7 @@ struct Lookup {
             return;
         if (result)
             freeaddrinfo(result);
-        if (fd >= 0)
-            ::close(fd);
+        closeWakeFd(fd, wfd);
         delete this;
     }
 };
@@ -215,7 +265,7 @@ void lookupThread(Lookup *lk) {
         lk->result = rc == 0 ? res : nullptr;
     }
     const uint64_t                 one = 1;
-    [[maybe_unused]] const ssize_t r   = ::write(lk->fd, &one, sizeof one);
+    [[maybe_unused]] const ssize_t r   = ::write(lk->wfd, &one, sizeof one);
     lk->release();
 }
 
@@ -239,7 +289,7 @@ bool resolve(const Url &url, const Waiter &w, std::vector<Addr> *out, std::strin
     auto *lk = new Lookup;
     lk->host = url.host;
     lk->port = port;
-    lk->fd   = eventfd(0, EFD_NONBLOCK | EFD_CLOEXEC);
+    lk->fd   = makeWakeFd(&lk->wfd);
     if (lk->fd < 0) {
         *error = sysError("dns", errno);
         delete lk;
@@ -247,7 +297,7 @@ bool resolve(const Url &url, const Waiter &w, std::vector<Addr> *out, std::strin
     }
     base::Thread thread;
     if (!thread.start([lk] { lookupThread(lk); }, kThreadStack)) {
-        ::close(lk->fd);
+        closeWakeFd(lk->fd, lk->wfd);
         delete lk;
         *error = "dns: no thread";
         return false;

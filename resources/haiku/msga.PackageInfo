@@ -1,0 +1,40 @@
+name			msga
+version			43~airos1-1
+architecture	x86_64
+summary			"Native Slack client (make-slack-great-again)"
+description		"MSGA is a fast, lightweight Slack client written in C++ with its own \
+toolkit. The air/OS build draws through the Be API (BWindow, BView and \
+BBitmap) and uses the system's services: the clipboard, notifications, \
+file panels, the keyring for sign-in tokens, the Media Kit for audio and \
+the system's OpenSSL and certificate store for TLS. It also runs Claude Code \
+sessions next to Slack."
+packager		"air/OS <https://github.com/airos-works>"
+vendor			"airos-works"
+copyrights {
+	"2026 Vladimir Osipov and the msga contributors"
+	"2026 air/OS contributors"
+}
+licenses {
+	"GNU GPL v3"
+	"MIT"
+	"FTL"
+	"MPL v1.1"
+}
+urls {
+	"https://github.com/airos-works/msga"
+}
+source-urls {
+	"https://github.com/airos-works/msga"
+}
+flags {
+	approve_license
+}
+provides {
+	msga = 43
+	app:MSGA = 43
+}
+requires {
+	haiku >= r1~beta6
+	lib:libssl >= 3
+	lib:libcrypto >= 3
+}

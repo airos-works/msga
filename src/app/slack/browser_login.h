@@ -21,7 +21,8 @@
 // air/OS (browser_login_haiku.cpp): Summit, driven through its WebDriver
 // service (summitdriver): the same sign-in page, the `d` cookie read with
 // WebDriver's cookie command and the workspaces from the web client's
-// localConfig_v2, with Summit's own window and a throwaway profile.
+// localConfig_v2, in a window of the user's own Summit (their extensions
+// and password manager included).
 #pragma once
 
 #include "app/slack/session.h"
@@ -78,6 +79,7 @@ private:
     int            _wdState    = 0;
     bool           _wdClient   = false; // navigated to the web client for its workspaces
     double         _wdClientMs = 0;
+    double         _summitReadyMs = 0; // a Summit msga started: when to hand it the session
     // The sign-in happens in the user's own Summit when one runs: its cookie
     // jar may hold an expired `d` and its localStorage an earlier session's
     // tokens. A cookie is only taken once Slack accepts it; until then the

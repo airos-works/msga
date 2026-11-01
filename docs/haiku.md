@@ -27,7 +27,7 @@ below it, and wherever the system has a service, msga uses it.
 | Sign-in tokens | The user's keyring, `BKeyStore` (air/OS asks once whether MSGA may use it). The settings file only marks which keys are in the keyring, so nothing asks before a first sign-in. | `src/base/secret_haiku.cpp` |
 | Audio | The Media Kit: `BMediaFile`/`BMediaTrack` decode (every codec of the media add-ons, Slack's AAC clips included), `BSoundPlayer` plays, `BMediaRecorder` records voice input; system sounds from the Sounds preferences | `src/plat/src/audio/audio_haiku.cpp` |
 | TLS | The system's OpenSSL 3 and its CA store (`/boot/system/data/ssl/CARootCertificates.pem`), not a TLS library of msga's own | `src/net/posix/tls_openssl.cpp` |
-| Browser sign-in | Summit through its WebDriver service (`summitdriver`): Slack's sign-in page opens in a Summit window; msga reads the `d` cookie and the web client's workspaces, then closes it | `src/app/slack/browser_login_haiku.cpp` |
+| Browser sign-in | Your own Summit (its profile, extensions and password manager) through its WebDriver service: msga asks Summit to open its automation socket at 127.0.0.1:47089 (starting Summit when it isn't running) and drives it with `summitdriver --target`. Slack's sign-in page opens as an "Automated" window; msga checks the session with Slack, reads the `d` cookie and the web client's workspaces, then closes that window | `src/app/slack/browser_login_haiku.cpp` |
 | Fonts | The system's (Noto Sans, Noto Color Emoji and the Noto scripts), the user's in `~/config/data/fonts` | `src/text/font_index.cpp` |
 | Spelling | Hunspell with HaikuPorts' dictionaries (`pkgman install myspell_en`, …) in `/boot/system/data/hunspell` | `src/app/spell/backend_linux.cpp` |
 | Settings, caches | `~/config/settings/msga`, `~/config/cache/msga` | `plat` `standardDir()` |
@@ -71,6 +71,10 @@ as above.
 
 - The Be API `dynamic_cast`s handlers, views and windows: the Haiku backend
   is compiled with `-frtti` although the rest of plat is not.
+- Summit opens one automation socket for the life of the process (a second
+  `--automation` is refused as busy) and hands a start only to the copy that
+  runs with the same profile: hence the fixed address, no `--profile`, and
+  the driver connecting with `--target` instead of starting a browser.
 - Haiku's runtime_loader has no `DT_RELR`: packed relocations are off there.
 - No `eventfd` and no `getrandom` on Haiku: the transport's wake fds are
   pipes, random bytes come from `getentropy`.

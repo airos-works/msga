@@ -2,25 +2,27 @@
 // WebDriver service (summitdriver, WebKit's WebDriver) instead of
 // Chromium's DevTools protocol, which air/OS has no browser for.
 //
-// msga starts summitdriver on a free loopback port; a new WebDriver session
-// starts Summit with a throwaway profile and opens Slack's sign-in page in a
-// window of its own (Summit marks it "Automated"). The user signs in there;
-// msga polls WebDriver's cookie command for the `d` cookie, then opens the
-// web client in the same window and reads its localConfig_v2 for the
-// workspaces and their tokens, exactly what the CDP path reads. Deleting the
-// session closes the window (and the Summit it started); the profile is
-// wiped afterwards.
+// The sign-in opens as a window (marked "Automated") of the user's own
+// Summit, with their extensions, password manager and Slack sessions. Summit
+// opens one automation socket for the life of the process (a second
+// --automation is refused as busy), so msga keeps to one fixed address: it
+// asks Summit to open it (a start with --automation, which Summit hands to
+// the copy that runs with the default profile, or the start of Summit itself
+// when none runs) and runs summitdriver with --target there. The driver then
+// never starts or quits a browser of its own.
+//
+// The user signs in there; msga polls WebDriver's cookie command for the `d`
+// cookie, opens the web client in the same window and reads its
+// localConfig_v2 for the workspaces and their tokens, as the CDP path does.
+// The user's profile may keep an expired cookie or an earlier session's
+// tokens, so Slack is asked before a session is taken (wdVerify). Deleting
+// the WebDriver session closes the window.
 //
 // The session asks for no page-load waits ("pageLoadStrategy":"none"):
 // otherwise every WebDriver command waits for the page, and Slack's heavy
 // pages on a machine short of memory outlast any sensible request timeout.
-//
-// A Summit already running with the user's own profile takes the session
-// instead (Summit is single launch): the window opens beside the user's, and
-// a Slack session they already have there is picked up at once.
 #include "app/slack/browser_login.h"
 
-#include "base/crypto.h"
 #include "base/file.h"
 #include "base/i18n.h"
 #include "base/json.h"
@@ -30,6 +32,10 @@
 #include "plat/plat.h"
 
 #include <algorithm>
+
+#include <Entry.h>
+#include <Roster.h>
+
 #include <arpa/inet.h>
 #include <netinet/in.h>
 #include <sys/socket.h>
@@ -50,7 +56,12 @@ constexpr int kHttpTimeoutMs    = 30000;
 
 constexpr const char *kSignInUrl     = "https://slack.com/signin";
 constexpr const char *kClientUrl     = "https://app.slack.com/client";
-constexpr const char *kProfilePrefix = "msga-signin-";
+// Where msga asks Summit to listen for WebDriver (loopback only), and how
+// long Summit gets to open it: a start of Summit, or the hand-off of the
+// arguments to the one running.
+constexpr const char *kAutomationAddress = "127.0.0.1:47089";
+constexpr int         kSummitStartMs     = 5000;
+constexpr int         kHandOffMs         = 1500;
 
 // summitdriver (the summit_webkit package), and the browser it starts.
 std::string findDriver() {
@@ -62,31 +73,32 @@ std::string findDriver() {
     return {};
 }
 
-bool summitInstalled() {
-    return file::exists("/boot/system/apps/Summit") ||
-           file::exists("/boot/home/config/non-packaged/apps/Summit") ||
-           file::exists("/boot/system/non-packaged/apps/Summit");
-}
-
-std::string makeProfileDir(plat::App &app) {
-    std::string root = app.standardDir(plat::StandardDir::Temp);
-    if (root.empty())
-        root = "/tmp";
-    for (int attempt = 0; attempt < 4; ++attempt) {
-        const std::string rnd = crypto::randomHex(6);
-        if (rnd.empty())
-            return {};
-        const std::string dir = file::join(root, str::concat({kProfilePrefix, rnd}));
-        if (!file::exists(dir) && file::makeDirs(dir))
-            return dir;
-    }
+// The installed Summit (the summit package, or a copy of the user's own).
+std::string summitPath() {
+    for (const char *p : {"/boot/system/apps/Summit", "/boot/home/config/non-packaged/apps/Summit",
+                          "/boot/system/non-packaged/apps/Summit"})
+        if (file::exists(p))
+            return p;
     return {};
 }
 
-// Only ever a directory this flow made.
-void wipeProfile(const std::string &path) {
-    if (!path.empty() && str::startsWith(file::baseName(path), kProfilePrefix))
-        file::removeTree(path);
+bool summitInstalled() {
+    return !summitPath().empty();
+}
+
+// Asks the user's Summit to open its automation socket at
+// kAutomationAddress: started as Deskbar would when it isn't running.
+// The milliseconds to give it, or -1 when it could not be started.
+int openAutomation() {
+    entry_ref ref;
+    if (get_ref_for_path(summitPath().c_str(), &ref) != B_OK)
+        return -1;
+    const bool  running = be_roster->IsRunning(&ref);
+    const char *argv[]  = {"--automation", kAutomationAddress, nullptr};
+    const status_t st   = be_roster->Launch(&ref, 2, argv);
+    if (st != B_OK && st != B_ALREADY_RUNNING)
+        return -1;
+    return running ? kHandOffMs : kSummitStartMs;
 }
 
 // DELETE /session/ID now, blocking (at most a few seconds): for teardown
@@ -164,18 +176,24 @@ void BrowserLogin::start(std::function<void(std::string)> progress, Done done) {
         _app.post([this] { finish({}, {}, "no_browser"); });
         return;
     }
-    _profile = makeProfileDir(_app);
-    _port    = net::freeLoopbackPort();
-    if (_profile.empty() || _port == 0) {
+    _port = net::freeLoopbackPort();
+    if (_port == 0) {
         _app.post([this] { finish({}, {}, "launch_failed"); });
         return;
     }
     _proc = std::make_shared<base::Process>();
-    if (!_proc->start(_driverExe, {"--port=" + str::number(_port), "--host=127.0.0.1"})) {
+    const int wait = openAutomation();
+    if (wait < 0 ||
+        !_proc->start(
+            _driverExe,
+            {"--port=" + str::number(_port), "--host=127.0.0.1",
+             std::string("--target=") + kAutomationAddress}
+        )) {
         _app.post([this] { finish({}, {}, "launch_failed"); });
         return;
     }
     _startMs = double(base::monotonicMs());
+    _summitReadyMs = _startMs + wait;
     setProgress(i18n::arg(i18n::tr("Opening %1\xE2\x80\xA6"), _browserName));
     _pollTimer = _app.addTimer(kPollIntervalMs, true, [this] { wdStep(); });
 }
@@ -233,13 +251,10 @@ void BrowserLogin::wdStep() {
                 _wdState = 1;
         });
         return;
-    case 1: { // a session: Summit with a throwaway profile
-        const std::string caps = str::concat(
-            {R"({"capabilities":{"alwaysMatch":{"pageLoadStrategy":"none",)",
-             R"("summit:browserOptions":{"args":["--profile",)",
-             quoted(_profile),
-             "]}}}}"}
-        );
+    case 1: { // a session, in the user's Summit
+        if (now < _summitReadyMs)
+            return;
+        const std::string caps = R"({"capabilities":{"alwaysMatch":{"pageLoadStrategy":"none"}}})";
         _wdState = 2;
         wd("POST", "/session", caps, [this](int status, const json::Value &v) {
             const std::string_view id = v["sessionId"].str();
@@ -390,25 +405,22 @@ void BrowserLogin::shutdown() {
     if (_wipeScheduled)
         return;
     _wipeScheduled = true;
-    // Deleting the session closes its window and quits the Summit the
-    // driver started; then the driver goes, and the profile (and the cookie
-    // in it) with it.
+    // Deleting the session closes its window (the user's Summit stays);
+    // then the driver goes.
     if (!_wdSession.empty() && _port) {
         // At once (the driver answers in milliseconds): whoever owns this
         // may destroy it, and kill the driver, right after.
         deleteSessionNow(_port, _wdSession);
         _wdSession.clear();
     }
-    auto              proc = _proc;
-    const std::string path = _profile;
-    plat::App        *app  = &_app;
-    _app.addTimer(3000, false, [app, proc, path] {
+    auto       proc = _proc;
+    plat::App *app  = &_app;
+    _app.addTimer(3000, false, [app, proc] {
         if (proc && proc->running())
             proc->kill(false);
-        app->addTimer(3000, false, [proc, path] {
+        app->addTimer(3000, false, [proc] {
             if (proc && proc->running())
                 proc->kill(true);
-            wipeProfile(path);
         });
     });
 }

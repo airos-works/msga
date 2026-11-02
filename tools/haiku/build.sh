@@ -45,6 +45,9 @@ rm -rf "$STAGE"
 mkdir -p "$STAGE/apps" "$STAGE/data/deskbar/menu/Office" "$STAGE/data/licenses" \
 	"$STAGE/documentation/packages/msga"
 cp "$BUILD/MSGA" "$STAGE/apps/MSGA"
+# The tray icon's Deskbar add-on (src/plat/src/haiku/deskbar_tray.cpp).
+mkdir -p "$STAGE/add-ons/MSGA"
+"${CROSS}strip" --strip-debug -o "$STAGE/add-ons/MSGA/MSGA Deskbar item" "$BUILD/msga_deskbar.so"
 ln -s ../../../../apps/MSGA "$STAGE/data/deskbar/menu/Office/MSGA"
 cp -R "$ROOT/README.md" "$ROOT/LICENSE" "$ROOT/THIRD_PARTY_LICENSES" "$ROOT/docs" \
 	"$STAGE/documentation/packages/msga/"

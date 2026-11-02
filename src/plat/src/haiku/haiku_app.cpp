@@ -3,6 +3,7 @@
 // has (clipboard, notifications, file panels, the roster, MIME types, the
 // network roster, the locale roster).
 #include "haiku/haiku_internal.h"
+#include "haiku/deskbar_protocol.h"
 
 #include "core/pacing.h"
 #include "core/strings.h"
@@ -133,6 +134,11 @@ void PlatBApplication::MessageReceived(BMessage *msg) {
     switch (msg->what) {
     case B_NETWORK_MONITOR:
         _owner->post([o = _owner] { o->networkChanged(); });
+        break;
+    case deskbar::kHello:
+    case deskbar::kActivated:
+    case deskbar::kMenuItem:
+        _owner->post([o = _owner, m = BMessage(*msg)] { o->trayMessage(m); });
         break;
     default:
         BApplication::MessageReceived(msg);
@@ -357,10 +363,144 @@ uint64_t HaikuApp::notify(const Notification &n) {
     return id;
 }
 
+// ── The tray ────────────────────────────────────────────────────────────────
+
+namespace {
+
+// The Deskbar add-on beside the application: the package's
+// add-ons/MSGA/MSGA Deskbar item, or msga_deskbar.so next to a build's binary.
+bool trayAddOn(entry_ref *ref) {
+    image_info info;
+    int32      cookie = 0;
+    while (get_next_image_info(B_CURRENT_TEAM, &cookie, &info) == B_OK) {
+        if (info.type != B_APP_IMAGE)
+            continue;
+        BPath app(info.name), dir;
+        if (app.InitCheck() != B_OK || app.GetParent(&dir) != B_OK)
+            return false;
+        BPath prefix, packaged, built(dir.Path(), "msga_deskbar.so");
+        if (dir.GetParent(&prefix) == B_OK)
+            packaged.SetTo(prefix.Path(), "add-ons/MSGA/MSGA Deskbar item");
+        for (const BPath *p : {&packaged, &built})
+            if (p->InitCheck() == B_OK && BEntry(p->Path()).Exists())
+                return get_ref_for_path(p->Path(), ref) == B_OK;
+        return false;
+    }
+    return false;
+}
+
+void addMenuItems(BMessage *into, const std::vector<MenuItem> &items) {
+    for (const MenuItem &m : items) {
+        BMessage item;
+        item.AddInt32(
+            "kind",
+            m.kind == MenuItem::Kind::Separator  ? deskbar::kKindSeparator
+            : m.kind == MenuItem::Kind::Submenu  ? deskbar::kKindSubmenu
+            : m.kind == MenuItem::Kind::Checkbox ? deskbar::kKindCheckbox
+                                                 : deskbar::kKindAction
+        );
+        item.AddUInt32("id", m.id);
+        item.AddString("label", m.label.c_str());
+        item.AddBool("enabled", m.enabled);
+        item.AddBool("checked", m.checked);
+        addMenuItems(&item, m.children);
+        into->AddMessage("item", &item);
+    }
+}
+
+} // namespace
+
+HaikuTray::HaikuTray(HaikuApp *app)
+    : _app(app), _icon(deskbar::kIcon), _tooltip(deskbar::kTooltip), _menu(deskbar::kMenu) {
+    _app->tray = this;
+    BDeskbar  deskbar;
+    entry_ref ref;
+    if (!deskbar.IsRunning() || !trayAddOn(&ref))
+        return;
+    // One left behind (MSGA did not get to remove it) is for a gone MSGA.
+    if (deskbar.HasItem(deskbar::kItemName))
+        deskbar.RemoveItem(deskbar::kItemName);
+    if (const status_t st = deskbar.AddItem(&ref); st != B_OK)
+        std::fprintf(stderr, "plat/haiku: the Deskbar item failed: %s\n", strerror(st));
+}
+
+HaikuTray::~HaikuTray() {
+    BMessage bye(deskbar::kGoodbye);
+    send(&bye);
+    BDeskbar().RemoveItem(deskbar::kItemName);
+    if (_app->tray == this)
+        _app->tray = nullptr;
+}
+
+void HaikuTray::send(BMessage *msg) {
+    if (_item.IsValid() && _item.SendMessage(msg, (BHandler *)nullptr, 500000) != B_OK)
+        _item = BMessenger(); // Deskbar quit, or the item was taken out
+}
+
+void HaikuTray::attach(BMessenger item) {
+    _item = item;
+    BMessage hello(deskbar::kHello);
+    hello.AddMessenger("msga", BMessenger(be_app));
+    send(&hello);
+    send(&_icon);
+    send(&_tooltip);
+    send(&_menu);
+}
+
+void HaikuTray::setIcon(const std::vector<Image> &sizes) {
+    _icon.MakeEmpty();
+    for (const Image &img : sizes) {
+        BBitmap *b = bitmapFrom(img); // straight alpha, as B_RGBA32 wants
+        if (!b)
+            continue;
+        std::string rows;
+        rows.reserve(size_t(img.width) * img.height * 4);
+        for (int y = 0; y < img.height; ++y)
+            rows.append(static_cast<const char *>(b->Bits()) + size_t(y) * b->BytesPerRow(),
+                        size_t(img.width) * 4);
+        delete b;
+        _icon.AddInt32("width", img.width);
+        _icon.AddInt32("height", img.height);
+        _icon.AddData("pixels", B_RAW_TYPE, rows.data(), ssize_t(rows.size()), false);
+    }
+    send(&_icon);
+}
+
+void HaikuTray::setTooltip(std::string_view utf8) {
+    _tooltip.MakeEmpty();
+    _tooltip.AddString("text", std::string(utf8).c_str());
+    send(&_tooltip);
+}
+
+void HaikuTray::setMenu(std::vector<MenuItem> items) {
+    _menu.MakeEmpty();
+    addMenuItems(&_menu, items);
+    send(&_menu);
+}
+
 std::unique_ptr<Tray> HaikuApp::createTray() {
-    // No Deskbar replicant yet: the window stays the app's presence (it
-    // has its Deskbar entry like every window).
-    return nullptr;
+    if (_secondary || tray)
+        return nullptr;
+    return std::make_unique<HaikuTray>(this);
+}
+
+void HaikuApp::trayMessage(const BMessage &msg) {
+    if (!tray)
+        return;
+    switch (msg.what) {
+    case deskbar::kHello: {
+        BMessenger item;
+        if (msg.FindMessenger("item", &item) == B_OK)
+            tray->attach(item);
+        break;
+    }
+    case deskbar::kActivated:
+        emit({.type = EventType::TrayActivated, .tray = tray});
+        break;
+    case deskbar::kMenuItem:
+        emit({.type = EventType::TrayMenuItem, .tray = tray, .id = msg.GetUInt32("id", 0)});
+        break;
+    }
 }
 
 // ── Monitors ────────────────────────────────────────────────────────────────

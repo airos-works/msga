@@ -208,6 +208,30 @@ private:
     std::function<HitArea(Point)>  _hitTest;
 };
 
+// ── The tray: MSGA's Deskbar item (deskbar_tray.cpp) ───────────────────────
+
+class HaikuTray final : public Tray {
+public:
+    explicit HaikuTray(HaikuApp *app);
+    ~HaikuTray() override;
+
+    void setIcon(const std::vector<Image> &sizes) override;
+    void setTooltip(std::string_view utf8) override;
+    void setMenu(std::vector<MenuItem> items) override;
+    // While the Deskbar item is there and has said hello.
+    bool isVisible() const override { return _item.IsValid(); }
+
+    // The item said hello (App thread): it gets everything set so far.
+    void attach(BMessenger item);
+
+private:
+    void send(BMessage *msg);
+
+    HaikuApp  *_app;
+    BMessenger _item;
+    BMessage   _icon, _tooltip, _menu;
+};
+
 // ── The app ─────────────────────────────────────────────────────────────────
 
 class PlatBApplication final : public BApplication {
@@ -283,6 +307,9 @@ public:
     int  frameIntervalMs() const;
     void networkChanged();
     void notificationClicked(uint64_t id);
+    // From the Deskbar item, on the App thread.
+    void trayMessage(const BMessage &msg);
+    HaikuTray *tray = nullptr; // the one tray, while it exists
 
     using App::emit;
 

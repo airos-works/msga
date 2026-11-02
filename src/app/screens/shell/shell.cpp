@@ -2558,6 +2558,11 @@ void Shell::refreshTrayIcon(int mentions, bool unread) {
 #ifdef __APPLE__
     const gfx::Color plane = 0xff000000U; // a template's alpha is all that counts
     const int        px[]  = {18, 36};
+#elif defined(__HAIKU__)
+    // Deskbar's tray is light and its icons are in colour: the logo, as the
+    // application's own icon has it (sizes for scaled desktops too).
+    const gfx::Color plane = 0xffffffffU;
+    const int        px[]  = {16, 24, 32, 48};
 #else
     const gfx::Color plane = 0xffffffffU; // panels and taskbars are dark by default
     const int        px[]  = {16, 22, 32, 44};
@@ -2613,7 +2618,11 @@ void Shell::refreshTrayIcon(int mentions, bool unread) {
             if (_trayImage)
                 p.drawBitmap(_trayImage->view(), {0, 0, float(n), float(n)});
             else
+#ifdef __HAIKU__
+                gfx::drawIcon(p, Icon::Logo, {0, 0, float(n), float(n)}, plane);
+#else
                 gfx::drawIcon(p, Icon::Tray, {0, 0, float(n), float(n)}, plane);
+#endif
         }
         if (mentions > 0 || unread) {
             const float d = std::max(6.f, float(n) * 0.3f);

@@ -13,3 +13,14 @@ target_link_libraries(plat PUBLIC be bnetapi network tracker)
 # backend's App classes derive from it).
 set_source_files_properties(src/haiku/haiku_app.cpp src/haiku/haiku_window.cpp
     src/core/common.cpp PROPERTIES COMPILE_OPTIONS "-frtti")
+
+# The tray icon: a Deskbar add-on (deskbar_tray.cpp), loaded into Deskbar's
+# own team, so a library of its own linking libbe alone. The package installs
+# it as add-ons/MSGA/MSGA Deskbar item; a build's binary finds it beside
+# itself as msga_deskbar.so.
+add_library(msga_deskbar MODULE src/haiku/deskbar_tray.cpp)
+target_include_directories(msga_deskbar PRIVATE src)
+target_link_libraries(msga_deskbar PRIVATE be)
+target_compile_options(msga_deskbar PRIVATE -frtti -Wall -Wextra -Wno-unused-parameter)
+set_target_properties(msga_deskbar PROPERTIES PREFIX "" OUTPUT_NAME "msga_deskbar" SUFFIX ".so"
+    LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR})

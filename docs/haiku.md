@@ -18,6 +18,7 @@ below it, and wherever the system has a service, msga uses it.
 | Event loop | The App thread runs msga's POSIX loop (the network layer's sockets plug in); the `BApplication` loops on a thread of its own and every window thread posts its events over. No thread ever waits for the App thread. | `src/plat/src/haiku/haiku_app.cpp` |
 | Window | The native tab (title, zoom, close; minimise from Deskbar), so msga's own title strip is off. Zoom, full screen, "on top" (floating feel), the work area left by the tab, borders and a Deskbar along the top or bottom. | same |
 | Clipboard | `BClipboard` (`text/plain`, and any other MIME type as is) | same |
+| Tray icon | A Deskbar item: a small add-on of its own (`add-ons/MSGA/MSGA Deskbar item`, libbe only, never MSGA itself in Deskbar's team) with the logo and the unread dot; a click brings MSGA back, the right button opens its menu (workspaces, Settings, Quit). With it the window's close hides MSGA, as on the other platforms (the "Use tray" setting turns it off). The item says hello to MSGA, which sends it the icon, tooltip and menu; one left behind by a crash takes itself out | `src/plat/src/haiku/deskbar_tray.cpp`, `haiku_app.cpp` |
 | Notifications | `BNotification`; a click relaunches MSGA with the notification's id, which the roster hands to the running copy (single launch) | same |
 | Files | `BFilePanel` for open, save and folder choices; drops of Tracker files and of data from other apps | same |
 | URLs | `BRoster` launches the scheme's preferred application (Summit or WebPositive for https); `msga://` is registered as a MIME type with MSGA as its handler | same |
@@ -35,7 +36,7 @@ below it, and wherever the system has a service, msga uses it.
 
 Not on air/OS: the self-updater (pkgman updates MSGA), the Linux launcher
 entry, importing the Slack desktop app's session (there is no Slack desktop
-app for air/OS), and a Deskbar tray icon (closing the window quits MSGA).
+app for air/OS).
 
 FreeType and HarfBuzz are built in (as on macOS and Windows): the ARM64 SDK
 has no HarfBuzz.

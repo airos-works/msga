@@ -71,6 +71,10 @@ endif()
 # The app itself: <build>/msga. With -DMSGA_DEMO=ON it also carries the fake
 # backend: `msga --demo <dir>` runs the demo workspace.
 add_executable(msga main.cpp)
+# air/OS: the Deskbar tray add-on is part of the app (src/plat/src/haiku).
+if(TARGET msga_deskbar)
+    add_dependencies(msga msga_deskbar)
+endif()
 target_link_libraries(msga PRIVATE msga_screens_shell)
 if(TARGET msga_app_update)
     target_link_libraries(msga PRIVATE msga_app_update)

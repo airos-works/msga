@@ -31,7 +31,7 @@ below it, and wherever the system has a service, msga uses it.
 | Browser sign-in | Your own Summit (its profile, extensions and password manager) through its WebDriver service: msga asks Summit to open its automation socket at 127.0.0.1:47089 (starting Summit when it isn't running) and drives it with `summitdriver --target`. Slack's sign-in page opens as an "Automated" window; msga checks the session with Slack, reads the `d` cookie and the web client's workspaces, then closes that window | `src/app/slack/browser_login_haiku.cpp` |
 | Fonts | The system's (Noto Sans, Noto Color Emoji and the Noto scripts), the user's in `~/config/data/fonts` | `src/text/font_index.cpp` |
 | Spelling | Hunspell with HaikuPorts' dictionaries (`pkgman install myspell_en`, …) in `/boot/system/data/hunspell` | `src/app/spell/backend_linux.cpp` |
-| Settings, caches | `~/config/settings/msga`, `~/config/cache/msga` | `plat` `standardDir()` |
+| Settings, caches | `~/config/settings/msga` (settings, workspaces, the app's data), `~/config/cache/msga` | `plat` `standardDir()` |
 | Crashes | debug_server's reports (msga's own handler is off) | `src/app/crash/crash_handler.cpp` |
 
 Not on air/OS: the self-updater (pkgman updates MSGA), the Linux launcher
@@ -76,6 +76,10 @@ as above.
   `--automation` is refused as busy) and hands a start only to the copy that
   runs with the same profile: hence the fixed address, no `--profile`, and
   the driver connecting with `--target` instead of starting a browser.
+- `~/config` is packagefs: only `settings`, `cache`, `var`, `packages` and
+  `non-packaged` under it are writable, and `~/config/data` (what
+  `B_USER_DATA_DIRECTORY` names) is what packages put there. msga's data
+  directory is therefore under `~/config/settings` too.
 - Haiku's runtime_loader has no `DT_RELR`: packed relocations are off there.
 - No `eventfd` and no `getrandom` on Haiku: the transport's wake fds are
   pipes, random bytes come from `getentropy`.

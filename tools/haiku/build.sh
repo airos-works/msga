@@ -22,10 +22,20 @@ BUILD=${BUILD:-$ROOT/build-haiku-$ARCH}
 [[ -f $SDK/env.sh ]] || { echo "no SDK at $SDK" >&2; exit 1; }
 # CROSS, TOOLS (host rc/xres/resattr/mimeset/package), MIMEDB
 . "$SDK/env.sh"
-RC=${HOST_TOOLS:+$HOST_TOOLS/rc}
-RC=${RC:-$TOOLS/rc/rc}
-XRES=${HOST_TOOLS:+$HOST_TOOLS/xres}
-XRES=${XRES:-$TOOLS/xres}
+# The host rc and xres: HOST_TOOLS/bin (with their libraries in
+# HOST_TOOLS/lib) in newer SDKs, HOST_TOOLS itself in older ones, else the
+# Haiku build's.
+host_tool() {
+	local t
+	for t in ${HOST_TOOLS:+"$HOST_TOOLS/bin/$1" "$HOST_TOOLS/$1"} "$2"; do
+		[[ -x $t ]] && { echo "$t"; return; }
+	done
+	echo "$2"
+}
+RC=$(host_tool rc "$TOOLS/rc/rc")
+XRES=$(host_tool xres "$TOOLS/xres")
+[[ -n ${HOST_TOOLS:-} && -d $HOST_TOOLS/lib ]] \
+	&& export LD_LIBRARY_PATH=$HOST_TOOLS/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}
 
 cmake -S "$ROOT" -B "$BUILD" -G Ninja -DCMAKE_BUILD_TYPE=MinSizeRel \
 	-DCMAKE_TOOLCHAIN_FILE="$ROOT/tools/haiku/toolchain.cmake" \
@@ -51,7 +61,9 @@ mkdir -p "$STAGE/add-ons/MSGA"
 ln -s ../../../../apps/MSGA "$STAGE/data/deskbar/menu/Office/MSGA"
 cp -R "$ROOT/README.md" "$ROOT/LICENSE" "$ROOT/THIRD_PARTY_LICENSES" "$ROOT/docs" \
 	"$STAGE/documentation/packages/msga/"
-cp "$BUILD/_deps/msga_freetype-src/docs/FTL.TXT" "$STAGE/data/licenses/FTL"
+# FetchContent's sources: BUILD/_deps unless the cache points elsewhere.
+deps=$(sed -n 's/^FETCHCONTENT_BASE_DIR:PATH=//p' "$BUILD/CMakeCache.txt")
+cp "${deps:-$BUILD/_deps}/msga_freetype-src/docs/FTL.TXT" "$STAGE/data/licenses/FTL"
 sed "s/^architecture[ \t].*/architecture	$ARCH/" "$ROOT/resources/haiku/msga.PackageInfo" \
 	> "$STAGE/.PackageInfo"
 version=$(awk '$1 == "version" { print $2 }' "$STAGE/.PackageInfo")

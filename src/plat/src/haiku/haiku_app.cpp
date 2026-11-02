@@ -765,9 +765,11 @@ std::string HaikuApp::standardDir(StandardDir d) const {
     switch (d) {
     case StandardDir::Config:
     case StandardDir::State:
-        return find(B_USER_SETTINGS_DIRECTORY);
+    // Not B_USER_DATA_DIRECTORY: ~/config is packagefs, and ~/config/data is
+    // what packages put there, read-only (and absent when none do). An app's
+    // own files go in ~/config/settings, which is writable.
     case StandardDir::Data:
-        return find(B_USER_DATA_DIRECTORY);
+        return find(B_USER_SETTINGS_DIRECTORY);
     case StandardDir::Cache:
         return find(B_USER_CACHE_DIRECTORY);
     case StandardDir::Temp:

@@ -273,6 +273,13 @@ int main(int argc, char **argv) {
         std::remove(log.c_str());
         base::setLogFile(log.c_str());
     }
+    // A Slack session signed in through Summit goes as Summit
+    // (browser_login_haiku.cpp saved its User-Agent).
+    if (std::string ua; file::readAll(file::join(pa.standardDir(plat::StandardDir::Config),
+                                                 "msga/browser-user-agent"),
+                                      &ua) &&
+        !ua.empty() && ua.size() < 512)
+        net::setUserAgent(std::string(str::trim(ua)));
 #endif
     // Dev builds only: the main-thread hang watchdog (crash_handler.h), its
     // heartbeat started below. AddressSanitizer makes everything ~5-10x

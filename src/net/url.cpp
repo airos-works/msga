@@ -2,7 +2,30 @@
 #include "net/net.h"
 #include "net/transport.h"
 
+#include <mutex>
+
 namespace net {
+
+namespace {
+std::mutex &agentMutex() {
+    static std::mutex m;
+    return m;
+}
+std::string &agentValue() {
+    static std::string v = detail::kUserAgent;
+    return v;
+}
+} // namespace
+
+void setUserAgent(std::string ua) {
+    std::lock_guard<std::mutex> lock(agentMutex());
+    agentValue() = ua.empty() ? std::string(detail::kUserAgent) : std::move(ua);
+}
+
+std::string userAgent() {
+    std::lock_guard<std::mutex> lock(agentMutex());
+    return agentValue();
+}
 
 namespace {
 

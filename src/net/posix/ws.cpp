@@ -197,8 +197,13 @@ bool PosixWs::connect(
          key,
          "\r\nSec-WebSocket-Version: 13\r\n"}
     );
-    for (const auto &h : headers)
+    bool agent = false;
+    for (const auto &h : headers) {
         req += str::concat({h.name, ": ", h.value, "\r\n"});
+        agent = agent || iequals(h.name, "user-agent");
+    }
+    if (!agent)
+        req += str::concat({"User-Agent: ", userAgent(), "\r\n"});
     req += "\r\n";
     if (!_stream->writeAll(req, w, error))
         return false;

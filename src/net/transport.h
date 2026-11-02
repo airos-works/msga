@@ -18,8 +18,8 @@
 
 namespace net::detail {
 
-// What every request says it is when the caller sets no User-Agent: the
-// same on every OS, and the one msga has always sent.
+// What every request says it is when the caller sets no User-Agent (and no
+// net::setUserAgent): the same on every OS, and the one msga has always sent.
 inline constexpr const char *kUserAgent = "Mozilla/5.0";
 
 // The stack of every thread the module starts (Client workers, WebSocket

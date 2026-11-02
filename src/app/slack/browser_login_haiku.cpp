@@ -52,7 +52,7 @@ constexpr int kDriverTimeoutMs  = 20000;  // summitdriver started → answering 
 constexpr int kTeamGraceMs      = 15000;  // the web client's boot after the login
 // After the window first shows a signed-in page, before Slack is asked
 // anything: the web client finishes its own boot first.
-constexpr int kSettleMs = 4000;
+constexpr int kSettleMs = 6000;
 // No answer from the driver for this long: it is wedged (a window gone under
 // it); give up rather than show "Verifying" for ever.
 constexpr int kDriverSilentMs = 60000;
@@ -349,6 +349,20 @@ void BrowserLogin::wdPoll() {
             _wdClient   = true;
             _wdClientMs = double(base::monotonicMs());
             LOG_INFO("signin", "the window shows a signed-in page");
+            // Every request on this session goes as the browser it belongs
+            // to (saved: the next start of msga uses it again).
+            wd("POST", base + "/execute/sync", R"({"script":"return navigator.userAgent","args":[]})",
+               [this](int status, const json::Value &v) {
+                   if (status != 200 || !v.isString() || v.str().empty())
+                       return;
+                   const std::string ua(v.str());
+                   net::setUserAgent(ua);
+                   const std::string dir = _app.standardDir(plat::StandardDir::Config);
+                   if (!dir.empty())
+                       file::writeAtomic(file::join(dir, "msga/browser-user-agent"), ua);
+                   LOG_INFO("signin", "requests go as %s", ua.c_str());
+               });
+            return;
             setProgress(i18n::tr("Signed in \xE2\x80\x94 looking up your workspaces\xE2\x80\xA6"));
         }
         if (double(base::monotonicMs()) - _wdClientMs < kSettleMs)
@@ -359,6 +373,17 @@ void BrowserLogin::wdPoll() {
         wd("GET", base + "/cookie", {}, [this, base, handoff](int status, const json::Value &v) {
             if (status != 200)
                 return;
+            // Slack revokes a session whose `d` turns up without the rest of
+            // the browser's slack.com cookies (d-s, b, x, …): msga's cookie
+            // is `d` followed by them, which every "Cookie: d=" + cookie
+            // header then carries whole.
+            std::string rest;
+            for (const json::Value c : v) {
+                const std::string_view name = c["name"].str(), domain = c["domain"].str();
+                if (name == "d" || name.empty() || !str::endsWith(domain, "slack.com"))
+                    continue;
+                rest += str::concat({"; ", name, "=", c["value"].str()});
+            }
             std::vector<std::string> found;
             for (const json::Value c : v) {
                 const std::string_view value = c["value"].str();
@@ -366,9 +391,11 @@ void BrowserLogin::wdPoll() {
                     continue;
                 // Verbatim, still percent-encoded as Slack stores it.
                 const std::string d(value);
-                if (std::find(_rejected.begin(), _rejected.end(), d) == _rejected.end() &&
-                    std::find(found.begin(), found.end(), d) == found.end())
-                    found.push_back(d);
+                if (std::find(_rejected.begin(), _rejected.end(), d) != _rejected.end())
+                    continue;
+                const std::string full = d + rest;
+                if (std::find(found.begin(), found.end(), full) == found.end())
+                    found.push_back(full);
             }
             if (found.empty())
                 return; // only sessions Slack refused: the sign-in isn't done
@@ -391,13 +418,9 @@ void BrowserLogin::wdPoll() {
                    std::vector<TeamSession> teams;
                    if (status == 200 && v.isString())
                        teams = parseLocalConfig(v.str());
-                   // The workspaces only, never their stored tokens: in a
-                   // profile that signed in before they can be an earlier
-                   // session's, and Slack revokes a fresh session presented
-                   // with a token that isn't its own. Fresh ones are scraped
-                   // from each workspace with the cookie.
-                   for (TeamSession &t : teams)
-                       t.token.clear();
+                   // The web client's own tokens: read after it has booted
+                   // signed in (kSettleMs), they are this session's (a
+                   // signed-in workspace page no longer carries one).
                    if (!teams.empty())
                        wdVerify(std::move(teams));
                    else if (double(base::monotonicMs()) - _wdClientMs > kTeamGraceMs) {
@@ -456,7 +479,8 @@ void BrowserLogin::wdVerify(std::vector<TeamSession> teams, size_t cookie) {
         // The window is left alone: if the session is stale, the web client
         // itself sends the user to Slack's sign-in, and a new cookie comes.
         LOG_INFO("signin", "no session Slack accepts; waiting for the sign-in to finish");
-        _rejected.insert(_rejected.end(), _cookies.begin(), _cookies.end());
+        for (const std::string &c : _cookies)
+            _rejected.push_back(c.substr(0, c.find(';')));
         _cookies.clear();
         _cookie.clear();
         setProgress(i18n::tr("Waiting for you to finish signing in to Slack in the Summit "

@@ -156,6 +156,13 @@ private:
 // DNS cache), so that leak checkers see what is really left.
 void releaseCaches();
 
+// The User-Agent of requests and WebSocket handshakes that set none
+// (default "Mozilla/5.0"). A session borrowed from a browser goes with that
+// browser's (Slack revokes a session cookie that turns up looking like
+// another client). Any thread.
+void        setUserAgent(std::string ua);
+std::string userAgent();
+
 // ── Helpers (pure, any thread) ─────────────────────────────────────────────
 
 struct Url {

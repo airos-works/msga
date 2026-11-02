@@ -306,7 +306,7 @@ void Client::Impl::run(Job &job) {
     for (const auto &h : req.headers)
         agent = agent || iequals(h.name, "user-agent");
     if (!agent)
-        req.headers.push_back({"User-Agent", detail::kUserAgent});
+        req.headers.push_back({"User-Agent", userAgent()});
     const std::string firstHost = url.host;
     // Every hop sends `req` itself, its headers adjusted in place: the body
     // (an upload can be tens of megabytes) is never copied.

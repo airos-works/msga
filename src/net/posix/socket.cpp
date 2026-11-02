@@ -70,7 +70,11 @@ bool     tlsPending(const TlsConn *c);
 // An eventfd: readable from set() on, so a waitFd with it as the wake fd
 // returns Cancelled at once (and every later wait sees the flag first).
 #ifdef __HAIKU__
-Cancel::Cancel() : _os(makeWakeFd(&_osWrite)) {}
+// In the body: _osWrite is initialised (to -1) after _os, so a write end set
+// from _os's initialiser would be lost, and leaked with every request.
+Cancel::Cancel() {
+    _os = makeWakeFd(&_osWrite);
+}
 
 Cancel::~Cancel() {
     closeWakeFd(int(_os), _osWrite);

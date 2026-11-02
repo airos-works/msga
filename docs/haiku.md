@@ -88,6 +88,9 @@ as above.
 - Haiku's runtime_loader has no `DT_RELR`: packed relocations are off there.
 - No `eventfd` and no `getrandom` on Haiku: the transport's wake fds are
   pipes, random bytes come from `getentropy`.
+  A pipe has two ends to keep and close (an early build lost every write
+  end: about 500 requests later the fd table was full, and air/OS's `pipe()`
+  then blocks instead of failing).
 - packagefs keeps a directory's mtime when a package adds files to it: the
   font index also watches the package folders, or a newly installed font
   package (noto_emoji_color) would go unseen until the cache is deleted.

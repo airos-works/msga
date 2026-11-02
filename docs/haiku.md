@@ -80,6 +80,11 @@ as above.
   `non-packaged` under it are writable, and `~/config/data` (what
   `B_USER_DATA_DIRECTORY` names) is what packages put there. msga's data
   directory is therefore under `~/config/settings` too.
+- Deskbar never unloads an add-on image and makes an item from its
+  archive, by class name, out of the first image it loaded with that class;
+  so the tray view's class is named after a hash of the add-on's sources.
+  Deskbar also drops an item when its file goes (pkgman updating MSGA while
+  it runs): the item tells MSGA, which adds it again from the new package.
 - Haiku's runtime_loader has no `DT_RELR`: packed relocations are off there.
 - No `eventfd` and no `getrandom` on Haiku: the transport's wake fds are
   pipes, random bytes come from `getentropy`.

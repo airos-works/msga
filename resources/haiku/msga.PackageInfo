@@ -1,5 +1,5 @@
 name			msga
-version			43~airos1-11
+version			43~airos1-12
 architecture	x86_64
 summary			"Native Slack client (make-slack-great-again)"
 description		"MSGA is a fast, lightweight Slack client written in C++ with its own \

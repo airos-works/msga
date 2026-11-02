@@ -138,6 +138,7 @@ void PlatBApplication::MessageReceived(BMessage *msg) {
     case deskbar::kHello:
     case deskbar::kActivated:
     case deskbar::kMenuItem:
+    case deskbar::kDetached:
         _owner->post([o = _owner, m = BMessage(*msg)] { o->trayMessage(m); });
         break;
     default:
@@ -424,7 +425,35 @@ HaikuTray::HaikuTray(HaikuApp *app)
         std::fprintf(stderr, "plat/haiku: the Deskbar item failed: %s\n", strerror(st));
 }
 
+void HaikuTray::detached() {
+    _item = BMessenger();
+    if (_readd)
+        return;
+    // Deskbar quit (a new one loads the item from its settings) or the
+    // add-on's file went, as when pkgman updates MSGA while it runs: once
+    // there is a Deskbar and the (new) file, add the item again unless it
+    // is back. A minute at most.
+    _readdTries = 0;
+    _readd      = _app->addTimer(1000, true, [this] {
+        BDeskbar  deskbar;
+        entry_ref ref;
+        bool      done = ++_readdTries >= 60;
+        if (!done && deskbar.IsRunning()) {
+            if (deskbar.HasItem(deskbar::kItemName))
+                done = true;
+            else if (trayAddOn(&ref))
+                done = deskbar.AddItem(&ref) == B_OK;
+        }
+        if (done) {
+            _app->cancelTimer(_readd);
+            _readd = 0;
+        }
+    });
+}
+
 HaikuTray::~HaikuTray() {
+    if (_readd)
+        _app->cancelTimer(_readd);
     BMessage bye(deskbar::kGoodbye);
     send(&bye);
     BDeskbar().RemoveItem(deskbar::kItemName);
@@ -499,6 +528,9 @@ void HaikuApp::trayMessage(const BMessage &msg) {
         break;
     case deskbar::kMenuItem:
         emit({.type = EventType::TrayMenuItem, .tray = tray, .id = msg.GetUInt32("id", 0)});
+        break;
+    case deskbar::kDetached:
+        tray->detached();
         break;
     }
 }

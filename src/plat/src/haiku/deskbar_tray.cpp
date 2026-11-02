@@ -2,7 +2,7 @@
 // team, so it is small and links libbe alone, never msga itself).
 //
 // MSGA asks Deskbar to load it (BDeskbar::AddItem with this file) and
-// removes it when its tray goes. The view tells MSGA it is there (kHello,
+// removes it when its tray goes, and adds it again when Deskbar dropped it. The view tells MSGA it is there (kHello,
 // with its messenger); MSGA sends the icon in a few sizes, the tooltip and
 // the menu, and gets the clicks back: a primary click (kActivated), a menu
 // choice (kMenuItem). Deskbar remembers add-ons across restarts, so a view
@@ -58,16 +58,23 @@ int32 removeLater(void *) {
 
 } // namespace
 
-// Global, under its own name: Deskbar's shelf finds Instantiate by the
-// archived class name.
-class _EXPORT MsgaTrayView : public BView {
+// Global, under a name of this build's own (MSGA_TRAY_VIEW, haiku.cmake):
+// Deskbar's shelf finds Instantiate by the archived class name, in the first
+// of the images it loaded that has it, and it never unloads one.
+#ifndef MSGA_TRAY_VIEW
+#define MSGA_TRAY_VIEW MsgaTrayView
+#endif
+#define MSGA_STRINGIFY_(x) #x
+#define MSGA_STRINGIFY(x)  MSGA_STRINGIFY_(x)
+
+class _EXPORT MSGA_TRAY_VIEW : public BView {
 public:
-    explicit MsgaTrayView(BRect frame)
+    explicit MSGA_TRAY_VIEW(BRect frame)
         : BView(frame, kItemName, B_FOLLOW_LEFT | B_FOLLOW_TOP, B_WILL_DRAW) {}
 
-    explicit MsgaTrayView(BMessage *archive) : BView(archive) {}
+    explicit MSGA_TRAY_VIEW(BMessage *archive) : BView(archive) {}
 
-    ~MsgaTrayView() override { delete _bitmap; }
+    ~MSGA_TRAY_VIEW() override { delete _bitmap; }
 
     // Out of line: Deskbar's shelf looks it up by name in this image. The
     // archive names no "add_on" signature: that would make the shelf load
@@ -80,6 +87,17 @@ public:
         SetDrawingMode(B_OP_ALPHA);
         SetBlendingMode(B_PIXEL_ALPHA, B_ALPHA_OVERLAY);
         hello();
+    }
+
+    // Deskbar unloads the item when it quits and when the add-on's file
+    // goes (an update of MSGA's package while it runs): MSGA puts it back
+    // then. Not after kGoodbye: MSGA took it out itself.
+    void DetachedFromWindow() override {
+        if (_msga.IsValid()) {
+            BMessage gone(kDetached);
+            _msga.SendMessage(&gone);
+        }
+        BView::DetachedFromWindow();
     }
 
     void Draw(BRect) override {
@@ -230,11 +248,13 @@ private:
 };
 
 
-BArchivable *MsgaTrayView::Instantiate(BMessage *archive) {
-    return validate_instantiation(archive, "MsgaTrayView") ? new MsgaTrayView(archive) : nullptr;
+BArchivable *MSGA_TRAY_VIEW::Instantiate(BMessage *archive) {
+    return validate_instantiation(archive, MSGA_STRINGIFY(MSGA_TRAY_VIEW))
+               ? new MSGA_TRAY_VIEW(archive)
+               : nullptr;
 }
 
 extern "C" _EXPORT BView *instantiate_deskbar_item(float maxWidth, float maxHeight) {
     (void)maxWidth;
-    return new MsgaTrayView(BRect(0, 0, maxHeight - 1, maxHeight - 1));
+    return new MSGA_TRAY_VIEW(BRect(0, 0, maxHeight - 1, maxHeight - 1));
 }

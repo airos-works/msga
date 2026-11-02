@@ -223,6 +223,8 @@ public:
 
     // The item said hello (App thread): it gets everything set so far.
     void attach(BMessenger item);
+    // Deskbar took the item out (App thread): add it again when it can.
+    void detached();
 
 private:
     void send(BMessage *msg);
@@ -230,6 +232,8 @@ private:
     HaikuApp  *_app;
     BMessenger _item;
     BMessage   _icon, _tooltip, _menu;
+    TimerId    _readd      = 0;
+    int        _readdTries = 0;
 };
 
 // ── The app ─────────────────────────────────────────────────────────────────

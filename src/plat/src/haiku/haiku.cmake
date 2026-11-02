@@ -22,5 +22,16 @@ add_library(msga_deskbar MODULE src/haiku/deskbar_tray.cpp)
 target_include_directories(msga_deskbar PRIVATE src)
 target_link_libraries(msga_deskbar PRIVATE be)
 target_compile_options(msga_deskbar PRIVATE -frtti -Wall -Wextra -Wno-unused-parameter)
+# Deskbar keeps every add-on image it loaded and makes the item from its
+# archive, by class name, out of the first image that has that class: the
+# view's class is named after the add-on's sources, so a new build is the
+# one Deskbar uses.
+file(READ ${CMAKE_CURRENT_SOURCE_DIR}/src/haiku/deskbar_tray.cpp _msga_tray_src)
+file(READ ${CMAKE_CURRENT_SOURCE_DIR}/src/haiku/deskbar_protocol.h _msga_tray_proto)
+string(SHA1 _msga_tray_hash "${_msga_tray_src}${_msga_tray_proto}")
+string(SUBSTRING ${_msga_tray_hash} 0 12 _msga_tray_hash)
+target_compile_definitions(msga_deskbar PRIVATE MSGA_TRAY_VIEW=MsgaTrayView_${_msga_tray_hash})
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
+    src/haiku/deskbar_tray.cpp src/haiku/deskbar_protocol.h)
 set_target_properties(msga_deskbar PROPERTIES PREFIX "" OUTPUT_NAME "msga_deskbar" SUFFIX ".so"
     LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR})

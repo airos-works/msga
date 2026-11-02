@@ -21,6 +21,8 @@ enum : uint32 {
     kGoodbye   = 'mTBy', // MSGA → item: MSGA's tray is going
     kActivated = 'mTAc', // item → MSGA: a primary click
     kMenuItem  = 'mTMi', // item → MSGA: a menu choice, "id" (uint32)
+    kDetached  = 'mTDt', // item → MSGA: Deskbar took the item out (it quit, or the
+                         // add-on's file went: a package update)
 };
 
 enum : int32 { kKindAction, kKindCheckbox, kKindSeparator, kKindSubmenu };

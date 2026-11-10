@@ -17,7 +17,10 @@
 #include <fnmatch.h>
 #include <unistd.h>
 
+#include <Bitmap.h>
+#include <BitmapStream.h>
 #include <Clipboard.h>
+#include <DataIO.h>
 #include <Deskbar.h>
 #include <Directory.h>
 #include <Entry.h>
@@ -31,6 +34,9 @@
 #include <Path.h>
 #include <Roster.h>
 #include <Screen.h>
+#include <TranslationUtils.h>
+#include <TranslatorFormats.h>
+#include <TranslatorRoster.h>
 #include <net/if.h>
 #include <NetworkInterface.h>
 #include <NetworkNotifications.h>
@@ -67,6 +73,54 @@ std::string nativeMime(std::string_view mime) {
     return core::isTextMime(mime) ? std::string("text/plain") : std::string(mime);
 }
 
+// A picture on air/OS's clipboard is an archived BBitmap, the message
+// "image/bitmap" (Screenshot, ShowImage, airShot, the browsers; a few say
+// "image/x-be-bitmap"): plat's image/png both ways.
+constexpr const char *kPngMime       = "image/png";
+constexpr const char *kBitmapNames[] = {"image/bitmap", "image/x-be-bitmap"};
+
+bool findBitmap(const BMessage &clip, BMessage *archive) {
+    for (const char *name : kBitmapNames)
+        if (clip.FindMessage(name, archive) == B_OK)
+            return true;
+    return false;
+}
+
+bool hasBitmap(const BMessage &clip) {
+    for (const char *name : kBitmapNames)
+        if (clip.HasMessage(name))
+            return true;
+    return false;
+}
+
+std::optional<std::string> pngFromBitmap(BMessage &archive) {
+    // Another application's data: only a frame a bitmap can have.
+    BRect frame;
+    if (archive.FindRect("_frame", &frame) != B_OK || !frame.IsValid() || frame.Width() >= 32768 ||
+        frame.Height() >= 32768)
+        return std::nullopt;
+    auto *bitmap = new BBitmap(&archive);
+    if (bitmap->InitCheck() != B_OK) {
+        delete bitmap;
+        return std::nullopt;
+    }
+    BBitmapStream in(bitmap); // owns the bitmap
+    BMallocIO     png;
+    if (BTranslatorRoster::Default()->Translate(&in, nullptr, nullptr, &png, B_PNG_FORMAT) != B_OK)
+        return std::nullopt;
+    return std::string(static_cast<const char *>(png.Buffer()), png.BufferLength());
+}
+
+bool bitmapFromPicture(const std::string &encoded, BMessage *archive) {
+    BMemoryIO in(encoded.data(), encoded.size());
+    BBitmap  *bitmap = BTranslationUtils::GetBitmap(&in);
+    if (!bitmap)
+        return false;
+    const bool ok = bitmap->InitCheck() == B_OK && bitmap->Archive(archive) == B_OK;
+    delete bitmap;
+    return ok;
+}
+
 } // namespace
 
 // ── PlatBApplication ────────────────────────────────────────────────────────
@@ -77,6 +131,19 @@ PlatBApplication::PlatBApplication(HaikuApp *owner, status_t *error)
 bool PlatBApplication::QuitRequested() {
     if (leaving)
         return true;
+    // The system shutting down or restarting: the registrar takes the reply
+    // BLooper sends for our false as "no" and calls the shutdown off, so it
+    // gets its yes here (BLooper's own is then a duplicate, which a message
+    // refuses), and the quit below has the team gone well within the time
+    // the registrar waits for it.
+    bool shutdown = false;
+    if (BMessage *msg = CurrentMessage();
+        msg && msg->FindBool("_shutdown_", &shutdown) == B_OK && shutdown) {
+        BMessage reply(B_REPLY);
+        reply.AddBool("result", true);
+        reply.AddInt32("thread", Thread());
+        msg->SendReply(&reply);
+    }
     // Command+Q, Deskbar's Quit, the system shutting down: the app decides.
     _owner->post([o = _owner] { o->fromApplication({.type = EventType::QuitRequested}); });
     return false;
@@ -298,12 +365,25 @@ void HaikuApp::emitFrames() {
 // ── Clipboard ───────────────────────────────────────────────────────────────
 
 void HaikuApp::setClipboard(std::vector<DataItem> items, Selection sel) {
-    if (sel != Selection::Clipboard || !be_clipboard->Lock())
+    if (sel != Selection::Clipboard)
+        return;
+    // A copied picture also as the bitmap the system's applications paste
+    // (decoded before the clipboard is locked).
+    BMessage bitmap;
+    bool     picture = false;
+    for (const DataItem &i : items)
+        if (i.mime.rfind("image/", 0) == 0 && bitmapFromPicture(i.data, &bitmap)) {
+            picture = true;
+            break;
+        }
+    if (!be_clipboard->Lock())
         return;
     be_clipboard->Clear();
     if (BMessage *clip = be_clipboard->Data()) {
         for (const DataItem &i : items)
             clip->AddData(nativeMime(i.mime).c_str(), B_MIME_TYPE, i.data.data(), ssize_t(i.data.size()));
+        if (picture)
+            clip->AddMessage(kBitmapNames[0], &bitmap);
     }
     be_clipboard->Commit();
     be_clipboard->Unlock();
@@ -313,15 +393,22 @@ void HaikuApp::requestClipboard(
     std::string_view mime, std::function<void(std::optional<std::string>)> cb, Selection sel
 ) {
     std::optional<std::string> out;
+    BMessage                   bitmap;
+    bool                       picture = false;
     if (sel == Selection::Clipboard && be_clipboard->Lock()) {
         if (BMessage *clip = be_clipboard->Data()) {
             const void *data = nullptr;
             ssize_t     size = 0;
             if (clip->FindData(nativeMime(mime).c_str(), B_MIME_TYPE, &data, &size) == B_OK)
                 out = std::string(static_cast<const char *>(data), size_t(size));
+            else if (mime == kPngMime)
+                picture = findBitmap(*clip, &bitmap);
         }
         be_clipboard->Unlock();
     }
+    // Encoded with the clipboard unlocked: other applications go on using it.
+    if (picture)
+        out = pngFromBitmap(bitmap);
     // Never re-entrant: the answer comes from the loop.
     post([cb = std::move(cb), out = std::move(out)] { cb(out); });
 }
@@ -334,6 +421,8 @@ void HaikuApp::requestClipboardMimes(std::function<void(std::vector<std::string>
             type_code type = 0;
             for (int32 i = 0; clip->GetInfo(B_MIME_TYPE, i, &name, &type) == B_OK; ++i)
                 out.emplace_back(std::strcmp(name, "text/plain") == 0 ? core::kTextMime : name);
+            if (hasBitmap(*clip) && std::find(out.begin(), out.end(), kPngMime) == out.end())
+                out.emplace_back(kPngMime);
         }
         be_clipboard->Unlock();
     }

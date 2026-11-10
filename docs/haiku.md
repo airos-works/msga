@@ -17,7 +17,7 @@ below it, and wherever the system has a service, msga uses it.
 | Input | Key codes by position with the keymap's characters for letters and punctuation, input methods (`B_INPUT_METHOD_EVENT`), wheel, buttons 1–5, modifier keys. Command (the Alt key by default) is the shortcut key, as on macOS; the shortcut labels name the key the Keymap preferences assign to it. | same |
 | Event loop | The App thread runs msga's POSIX loop (the network layer's sockets plug in); the `BApplication` loops on a thread of its own and every window thread posts its events over. No thread ever waits for the App thread. | `src/plat/src/haiku/haiku_app.cpp` |
 | Window | The native tab (title, zoom, close; minimise from Deskbar), so msga's own title strip is off. Zoom, full screen, "on top" (floating feel), the work area left by the tab, borders and a Deskbar along the top or bottom. | same |
-| Clipboard | `BClipboard` (`text/plain`, and any other MIME type as is) | same |
+| Clipboard | `BClipboard` (`text/plain`, and any other MIME type as is). Pictures are the archived `BBitmap` (`image/bitmap`) the system's applications exchange: one pastes into a message as a PNG (the Translation Kit encodes it), and a picture copied in MSGA goes out as both | same |
 | Tray icon | A Deskbar item: a small add-on of its own (`add-ons/MSGA/MSGA Deskbar item`, libbe only, never MSGA itself in Deskbar's team) with the logo and the unread dot; a click brings MSGA back, the right button opens its menu (workspaces, Settings, Quit). With it the window's close hides MSGA, as on the other platforms (the "Use tray" setting turns it off). The item says hello to MSGA, which sends it the icon, tooltip and menu; one left behind by a crash takes itself out | `src/plat/src/haiku/deskbar_tray.cpp`, `haiku_app.cpp` |
 | Notifications | `BNotification`; a click relaunches MSGA with the notification's id, which the roster hands to the running copy (single launch) | same |
 | Files | `BFilePanel` for open, save and folder choices; drops of Tracker files and of data from other apps | same |
@@ -96,3 +96,7 @@ as above.
   package (noto_emoji_color) would go unseen until the cache is deleted.
 - BWindow eats every Command+key it has no shortcut for: the window passes
   them all to the view (Command+Q still asks MSGA to quit).
+- A `QuitRequested()` that returns false calls a shutdown or restart off: the
+  registrar's request (`_shutdown_` in the message) expects a reply, and
+  `BLooper` sends the hook's result. MSGA quits from its own loop, so the
+  application answers yes to that request itself before it posts the quit.
